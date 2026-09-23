@@ -1,0 +1,64 @@
+# Python
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+backend/.env
+web/.env.local
+
+# Next.js / Node
+web/node_modules/
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo
+web/screenshots/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local datasets and upload bundles
+Datasets/
+kaggle_upload/
+notebooks/
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# AI checkpoints (GitHub's normal Git storage is not suitable for weights)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
+
+# Runtime storage
+storage/checkpoints/*
+!storage/checkpoints/.gitkeep
+storage/outputs/*
+!storage/outputs/.gitkeep
+storage/videos/*
+!storage/videos/.gitkeep
+
+# Generated analysis artifacts; keep the manifest required by the demo
+outputs/**
+!outputs/video_audit/
+outputs/video_audit/**
+!outputs/video_audit/video_manifest_FINAL_kaggle.csv
+
+# Databases, logs, and OS/editor files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,50 @@
+{
+  "model": "V-JEPA 2.1 ViT-L/16 384",
+  "checkpoint_epoch": 8,
+  "num_frames": 32,
+  "image_size": 384,
+  "temporal_views": [
+    0.25,
+    0.5,
+    0.75
+  ],
+  "aggregation": "WEIGHTED",
+  "aggregation_weights": [
+    0.2,
+    0.6,
+    0.2
+  ],
+  "class_names": [
+    "Authorized Intervention",
+    "Carrying Overload with Forklift",
+    "Closed Panel Cover",
+    "Opened Panel Cover",
+    "Safe Carrying",
+    "Safe Walkway",
+    "Safe Walkway Violation",
+    "Unauthorized Intervention"
+  ],
+  "thresholds": [
+    0.5499999999999999,
+    0.59,
+    0.47,
+    0.6599999999999999,
+    0.8099999999999999,
+    0.6699999999999999,
+    0.57,
+    0.7299999999999999
+  ],
+  "validation_metrics_05": {
+    "macro_f1": 0.6260234595958107,
+    "micro_f1": 0.6538461538461539,
+    "macro_precision": 0.5591316763191763,
+    "macro_recall": 0.7775507086999022
+  },
+  "validation_metrics_tuned": {
+    "macro_f1": 0.7395636957128893,
+    "micro_f1": 0.7579908675799086,
+    "macro_precision": 0.7403639371381308,
+    "macro_recall": 0.7807704056695992
+  },
+  "validation_mAP": 0.721101192665117
+}
