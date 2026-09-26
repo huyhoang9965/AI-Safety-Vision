@@ -1,8 +1,21 @@
 from unittest.mock import patch
 
+import cv2
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
+from app.api.auth import camera_viewer, dashboard_viewer
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def authorized_api_user():
+    app.dependency_overrides[camera_viewer] = lambda: {"id": "test-camera-user"}
+    app.dependency_overrides[dashboard_viewer] = lambda: {"id": "test-dashboard-user"}
+    yield
+    app.dependency_overrides.pop(camera_viewer, None)
+    app.dependency_overrides.pop(dashboard_viewer, None)
 
 
 def offline_database():
@@ -50,6 +63,24 @@ def test_video_stream_uses_dataset_file():
     assert len(response.content) > 0
 
 
+def test_test_video_media_can_stream_without_bearer_token():
+    app.dependency_overrides.pop(camera_viewer, None)
+    with patch("app.database.database.initialize_database", side_effect=RuntimeError("test database offline")):
+        with offline_database(), TestClient(app) as client:
+            catalog_response = client.get("/api/videos/test")
+            stream_response = client.get(
+                "/api/videos/1/stream",
+                headers={"Range": "bytes=0-1023"},
+            )
+            thumbnail_response = client.get("/api/videos/1/thumbnail")
+
+    assert catalog_response.status_code == 401
+    assert stream_response.status_code in {200, 206}
+    assert stream_response.headers["content-type"].startswith("video/mp4")
+    assert thumbnail_response.status_code == 200
+    assert thumbnail_response.headers["content-type"].startswith("image/jpeg")
+
+
 def test_video_thumbnail_is_extracted_from_dataset_video():
     with patch("app.database.database.initialize_database", side_effect=RuntimeError("test database offline")):
         with offline_database(), TestClient(app) as client:
@@ -58,3 +89,16 @@ def test_video_thumbnail_is_extracted_from_dataset_video():
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/jpeg")
     assert response.content.startswith(b"\xff\xd8")
+
+
+def test_violation_evidence_thumbnail_uses_requested_full_resolution_frame():
+    with patch("app.database.database.initialize_database", side_effect=RuntimeError("test database offline")):
+        with offline_database(), TestClient(app) as client:
+            videos = client.get("/api/videos/test").json()
+            response = client.get("/api/videos/1/thumbnail?frame_index=0")
+
+    assert response.status_code == 200
+    frame = cv2.imdecode(np.frombuffer(response.content, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert frame is not None
+    assert frame.shape[1] == videos[0]["width"]
+    assert frame.shape[0] == videos[0]["height"]

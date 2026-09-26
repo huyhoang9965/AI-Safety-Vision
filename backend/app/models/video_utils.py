@@ -28,27 +28,18 @@ def read_sampled_rgb_frames(video_path: Path, num_frames: int) -> tuple[np.ndarr
 
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     indices = sample_midpoint_indices(total_frames, num_frames)
-    target_indices = set(int(index) for index in indices)
-    collected: dict[int, np.ndarray] = {}
-    current = 0
-
     try:
-        while True:
+        collected = []
+        for index in indices:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
             ok, frame = capture.read()
             if not ok:
-                break
-            if current in target_indices:
-                collected[current] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            if len(collected) == len(target_indices):
-                break
-            current += 1
+                raise RuntimeError(f"Missing sampled frame {int(index)} in {video_path.name}")
+            collected.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     finally:
         capture.release()
 
-    missing = [int(index) for index in indices if int(index) not in collected]
-    if missing:
-        raise RuntimeError(f"Missing sampled frames {missing} in {video_path.name}")
-    return np.stack([collected[int(index)] for index in indices], axis=0), indices
+    return np.stack(collected, axis=0), indices
 
 
 def letterbox_mean_pad(frames: np.ndarray, image_size: int) -> np.ndarray:

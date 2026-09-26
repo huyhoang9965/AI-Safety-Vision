@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,8 @@ from app.config import get_settings
 from app.models.base import ModelAdapter, ModelNotConnectedError
 from app.models.rfdetr import RFDETRDetector
 from app.models.videomae import VideoMAEClassifier
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,22 @@ class ModelRegistry:
 
     def is_loaded(self, model_name: str) -> bool:
         return model_name in self._loaded
+
+    def warmup(self, model_name: str) -> None:
+        _, adapter = self.get_adapter(model_name)
+        adapter.warmup()
+
+    def warmup_all(self) -> None:
+        for spec in self.specs():
+            connected, reason = spec.connection_status()
+            if not connected:
+                logger.warning("Skipping %s warmup: %s", spec.name, reason)
+                continue
+            try:
+                self.warmup(spec.name)
+                logger.info("Preloaded AI model %s", spec.name)
+            except Exception:
+                logger.exception("Could not preload AI model %s", spec.name)
 
     def catalog_rows(self) -> list[dict[str, str | None]]:
         return [

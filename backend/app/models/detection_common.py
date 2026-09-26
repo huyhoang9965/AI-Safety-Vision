@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from fractions import Fraction
+import logging
 from pathlib import Path
 import re
 from typing import Callable, Sequence
@@ -10,7 +11,10 @@ from uuid import uuid4
 
 import cv2
 
+from app.config import get_settings
 from app.models.base import InferenceOutput
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,11 +69,19 @@ def render_detection_video(
         raise RuntimeError("PyAV is required to create an H.264 browser-compatible output video") from exc
 
     container = av.open(str(output_path), mode="w")
+    settings = get_settings()
+    output_width, output_height = width, height
+    if 0 < settings.video_output_max_width < width:
+        scale = settings.video_output_max_width / width
+        output_width = settings.video_output_max_width
+        output_height = max(2, round(height * scale))
+        output_width -= output_width % 2
+        output_height -= output_height % 2
     stream = container.add_stream("libx264", rate=Fraction(fps).limit_denominator(1000))
-    stream.width = width
-    stream.height = height
+    stream.width = output_width
+    stream.height = output_height
     stream.pix_fmt = "yuv420p"
-    stream.options = {"crf": "23", "preset": "veryfast"}
+    stream.options = {"crf": "24", "preset": settings.video_encode_preset or "ultrafast"}
 
     peak_counts: Counter[str] = Counter()
     stored_detections: list[dict[str, float | int | str]] = []
@@ -87,9 +99,8 @@ def render_detection_video(
             ok, frame = capture.read()
             if not ok:
                 break
-            source_frame = frame.copy()
-
             is_inference_frame = frame_index % inference_interval == 0
+            source_frame = frame.copy() if is_inference_frame else None
             if is_inference_frame:
                 current_detections = predict_frame(frame)
                 inference_frames += 1
@@ -189,7 +200,12 @@ def render_detection_video(
                             )
                             best_evidence[evidence_key] = (detection.confidence, crop, frame_index, [x1,y1,x2,y2])
 
-            video_frame = av.VideoFrame.from_ndarray(frame, format="bgr24")
+            encoded_frame = (
+                cv2.resize(frame, (output_width, output_height), interpolation=cv2.INTER_AREA)
+                if (output_width, output_height) != (width, height)
+                else frame
+            )
+            video_frame = av.VideoFrame.from_ndarray(encoded_frame, format="bgr24")
             for packet in stream.encode(video_frame):
                 container.mux(packet)
             frame_index += 1
@@ -209,15 +225,20 @@ def render_detection_video(
     for (class_name, track_id), (score, crop, evidence_frame, bbox) in best_evidence.items():
         safe_class_name = re.sub(r"[^a-z0-9]+", "-", class_name.lower()).strip("-")
         evidence_path = output_dir / f"{output_path.stem}_{safe_class_name}_{track_id}.jpg"
-        if cv2.imwrite(str(evidence_path), crop):
+        try:
+            saved = cv2.imwrite(str(evidence_path), crop, [cv2.IMWRITE_JPEG_QUALITY, 98])
+        except Exception as exc:
+            logger.warning("Could not save PPE evidence crop %s: %s", evidence_path, exc)
+            saved = False
+        if saved:
             evidence_images[class_name] = f"/results/{evidence_path.name}"
-            evidence_events.append({
-                'class_name': class_name, 'track_id': track_id,
-                'image': f'/results/{evidence_path.name}',
-                'frame_index': evidence_frame, 'timestamp_seconds': round(evidence_frame/fps,3),
-                'bbox': bbox, 'confidence': None, 'person_confidence': score,
-                'basis': 'person_detected_ppe_not_observed',
-            })
+        evidence_events.append({
+            'class_name': class_name, 'track_id': track_id,
+            'image': f'/results/{evidence_path.name}' if saved else None,
+            'frame_index': evidence_frame, 'timestamp_seconds': round(evidence_frame/fps,3),
+            'bbox': bbox, 'confidence': None, 'person_confidence': score,
+            'basis': 'person_detected_ppe_not_observed',
+        })
     return InferenceOutput(
         type="detection",
         prediction=top_class,
@@ -230,6 +251,10 @@ def render_detection_video(
             "inference_frames": inference_frames,
             "inference_fps": round(fps / inference_interval, 3),
             "fps": fps,
+            "frame_width": width,
+            "frame_height": height,
+            "output_width": output_width,
+            "output_height": output_height,
             "evidence_images": evidence_images,
             "evidence_events": evidence_events,
         },

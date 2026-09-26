@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from threading import Thread
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -10,6 +12,14 @@ from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
+from app.api.auth import router as auth_router
+from app.api.alerts import router as alerts_router
+from app.api.incidents import router as incidents_router
+from app.api.cameras_admin import router as cameras_admin_router
+from app.api.users_admin import router as users_admin_router
+from app.api.chat import router as chat_router
+from app.api.settings import router as settings_router
+from app.api.reports import router as reports_router
 from app.api.inference import router as inference_router
 from app.api.models import router as models_router
 from app.api.videos import router as videos_router
@@ -40,6 +50,12 @@ async def lifespan(app: FastAPI):
             "PostgreSQL is not ready; inference remains real but history will not be persisted: %s",
             exc,
         )
+    if settings.preload_models and not os.getenv("PYTEST_CURRENT_TEST"):
+        Thread(
+            target=registry.warmup_all,
+            name="ai-model-preloader",
+            daemon=True,
+        ).start()
     yield
 
 
@@ -63,6 +79,14 @@ app.mount("/results", StaticFiles(directory=settings.output_dir), name="results"
 app.include_router(videos_router)
 app.include_router(models_router)
 app.include_router(inference_router)
+app.include_router(auth_router)
+app.include_router(alerts_router)
+app.include_router(incidents_router)
+app.include_router(cameras_admin_router)
+app.include_router(users_admin_router)
+app.include_router(chat_router)
+app.include_router(settings_router)
+app.include_router(reports_router)
 
 
 @app.get("/api/health", tags=["health"])

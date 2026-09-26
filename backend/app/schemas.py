@@ -31,6 +31,12 @@ class ModelItem(BaseModel):
 class InferenceRequest(BaseModel):
     video_id: int = Field(gt=0)
     model_name: str = Field(min_length=1, max_length=100)
+    camera_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=60,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
 
 class InferenceResponse(BaseModel):
@@ -46,3 +52,5 @@ class InferenceResponse(BaseModel):
     metrics: dict[str, Any]
     ground_truth: list[str]
     persisted: bool
+    event_ids: list[str] = Field(default_factory=list)
+    violations_saved: int = 0

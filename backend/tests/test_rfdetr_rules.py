@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import numpy as np
 from app.models.rfdetr import RFDETRDetector
 from app.models.detection_common import FrameDetection, render_detection_video
-from app.models.person_locator import tile_windows
+from app.models.person_locator import inference_windows, tile_windows
 import cv2
 
 
@@ -70,6 +70,13 @@ def test_tiles_cover_far_edges():
     assert (0,0,960,720) in windows
     assert any(x2 == 1920 and y2 == 1080 for _,_,x2,y2 in windows)
     assert tile_windows(640,480) == [(0,0,640,480)]
+
+
+def test_fast_locator_uses_one_full_frame_pass():
+    assert inference_windows(1920, 1080, use_tiles=False) == [(0, 0, 1920, 1080)]
+    tiled = inference_windows(1920, 1080, use_tiles=True)
+    assert tiled[0] == (0, 0, 1920, 1080)
+    assert len(tiled) > 1
 
 
 def test_evidence_keeps_two_people_with_same_violation(tmp_path):

@@ -25,4 +25,6 @@ class InferenceOutput:
 
 
 class ModelAdapter(Protocol):
+    def warmup(self) -> None: ...
+
     def infer(self, video_path: Path, output_dir: Path) -> InferenceOutput: ...

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import math
+from threading import Lock
 
+from app.config import get_settings
 from app.models.base import ModelNotConnectedError
 from app.models.detection_common import FrameDetection
 
@@ -23,25 +25,64 @@ def tile_windows(width: int, height: int):
     return [(x, y, x+tile_w, y+tile_h) for y in starts(height,tile_h) for x in starts(width,tile_w)]
 
 
+def inference_windows(width: int, height: int, use_tiles: bool):
+    full_frame = (0, 0, width, height)
+    if not use_tiles:
+        return [full_frame]
+    return list(dict.fromkeys([full_frame, *tile_windows(width, height)]))
+
+
 class PersonLocator:
     def __init__(self, weight_path: Path):
         self.weight_path = weight_path
         self._model = None
+        self._device = "cpu"
+        self._load_lock = Lock()
+        self._warmed = False
 
-    def predict(self, frame) -> list[FrameDetection]:
-        if self._model is None:
+    def _load(self):
+        if self._model is not None:
+            return self._model
+        with self._load_lock:
+            if self._model is not None:
+                return self._model
             if not self.weight_path.is_file():
                 raise ModelNotConnectedError(f"Person locator checkpoint missing: {self.weight_path}")
             from ultralytics import YOLO
+            import torch
+
             self._model = YOLO(str(self.weight_path))
             if self._model.names.get(0) != "person":
                 raise ModelNotConnectedError("Person locator must have COCO person at class 0")
+            configured = get_settings().device
+            self._device = configured if configured != "auto" else (0 if torch.cuda.is_available() else "cpu")
+            if self._device == "cpu":
+                torch.set_num_threads(max(1, get_settings().ai_cpu_threads))
+            return self._model
+
+    def warmup(self) -> None:
+        if self._warmed:
+            return
+        import numpy as np
+
+        model = self._load()
+        size = get_settings().person_locator_input_size
+        model.predict(
+            np.zeros((size, size, 3), dtype=np.uint8),
+            classes=[0], conf=.30, imgsz=size, verbose=False, device=self._device,
+        )
+        self._warmed = True
+
+    def predict(self, frame) -> list[FrameDetection]:
+        model = self._load()
+        settings = get_settings()
         h, w = frame.shape[:2]
-        windows = list(dict.fromkeys([(0, 0, w, h), *tile_windows(w, h)]))
+        windows = inference_windows(w, h, settings.person_locator_tiling)
         people = []
         for x1,y1,x2,y2 in windows:
-            result = self._model.predict(frame[y1:y2,x1:x2], classes=[0], conf=.30,
-                                         imgsz=960, verbose=False, device="cpu")[0]
+            result = model.predict(frame[y1:y2,x1:x2], classes=[0], conf=.30,
+                                   imgsz=settings.person_locator_input_size,
+                                   verbose=False, device=self._device)[0]
             for box in result.boxes:
                 a,b,c,d = box.xyxy[0].tolist()
                 # Reject people cut by artificial tile edges; adjacent tiles or

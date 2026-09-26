@@ -55,8 +55,15 @@ DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_safety_monito
 FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 AI_DEVICE=auto
 DETECTION_CONFIDENCE=0.20
-RF_DETR_INFERENCE_FPS=1.0
-RF_DETR_INPUT_SIZE=512
+RF_DETR_INFERENCE_FPS=0.5
+RF_DETR_INPUT_SIZE=384
+PERSON_LOCATOR_TILING=false
+PERSON_LOCATOR_INPUT_SIZE=960
+AI_PRELOAD_MODELS=true
+AI_CPU_THREADS=8
+AI_MAX_CONCURRENT_INFERENCE=1
+VIDEO_OUTPUT_MAX_WIDTH=1280
+VIDEO_ENCODE_PRESET=ultrafast
 ```
 
 Khởi động backend:
@@ -98,7 +105,7 @@ Mở `/demo`; không cần chọn model hoặc nhấn nút chạy. Dashboard c�
 4. Người dùng có thể xác nhận sự cố hoặc đánh dấu báo sai trong phần lịch sử.
 5. Khi PostgreSQL kết nối, inference và các detection/prediction được ghi vào database; nếu database chưa sẵn sàng, lịch sử giao diện được giữ trong phiên trình duyệt.
 
-VideoMAE là model phân loại cả clip nên không trả tọa độ. Giao diện khoanh vùng đã hiệu chỉnh riêng cho camera. Pipeline PPE dùng YOLOv8s COCO để định vị người (toàn ảnh và các ô chồng lấn), rồi RF-DETR kiểm tra trên từng crop người. Người đứng yên và người chỉ lộ phần thân trên không còn bị loại bởi ngưỡng chuyển động.
+VideoMAE là model phân loại cả clip nên không trả tọa độ. Giao diện khoanh vùng đã hiệu chỉnh riêng cho camera. Pipeline PPE mặc định dùng một lượt YOLOv8s COCO trên toàn ảnh 960px để định vị người, rồi RF-DETR kiểm tra trên từng crop người. Có thể bật `PERSON_LOCATOR_TILING=true` khi chạy bằng GPU hoặc khi cần ưu tiên phát hiện người rất nhỏ ở xa. Người đứng yên và người chỉ lộ phần thân trên không còn bị loại bởi ngưỡng chuyển động.
 
 Cảnh báo thiếu PPE cần hai lần kiểm tra liên tiếp trên cùng người và được ghi **nghi ngờ**: checkpoint PPE không có nhãn `no_helmet/no_vest`, không thấy PPE chưa chứng minh người không mang PPE. Vùng đầu và thân được ước lượng trong bbox người; người chỉ lộ đầu/vai không được đánh giá thiếu áo. Mỗi người/loại cảnh báo có một ảnh crop, thời điểm trong clip và mã theo dõi riêng trong `metrics.evidence_events`. Không dùng confidence nhận diện người làm xác suất vi phạm. Các mã theo dõi chỉ có hiệu lực trong từng clip và có thể đổi khi người bị che khuất lâu.
 
@@ -152,7 +159,7 @@ Các giá trị prediction/confidence trên chỉ minh họa **schema API**, kh�
 | --- | --- | --- |
 | RF-DETR | Connected sau khi cài `rfdetr==1.10.1` | RFDETRLarge + OpenCV output renderer |
 | VideoMAE | Connected | Transformers, 16 frame midpoint sampling, checkpoint `best_stage3.pt` |
-| YOLOv8s COCO (bổ trợ) | `storage/checkpoints/yolov8s.pt` | Định vị người, chia ô chồng lấn; gọi nội bộ từ RF-DETR |
+| YOLOv8s COCO (bổ trợ) | `storage/checkpoints/yolov8s.pt` | Định vị người toàn ảnh; hỗ trợ bật chia ô chồng lấn bằng cấu hình |
 
 Các tên model khác bị API từ chối. Backend không thay bằng ảnh, video hay prediction giả.
 

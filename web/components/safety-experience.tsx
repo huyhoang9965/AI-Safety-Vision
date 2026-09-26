@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useRouter } from 'next/navigation';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BellRing, Camera, Check, ChevronRight, Circle, Eye, EyeOff, Fingerprint, Focus, HardHat, KeyRound, Layers3, Lock, LogOut, Mail, Maximize, Pause, Play, ScanLine, Shield, ShieldCheck, TriangleAlert, User, X } from 'lucide-react';
+import { AuthApiError, defaultAppPath, loginAccount, logoutAccount, registerAccount, restoreAuthSession, saveAuthSession, userRole, type ApiUser } from '@/lib/auth';
 import { clamp, lerp, segmentInOut, smoothstep } from '@/lib/motion';
 
 const SCROLL_LENGTH = 3700;
@@ -33,7 +35,8 @@ function CapabilitySlider() {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const touch = useRef<number | null>(null);
   useEffect(() => {
-    const element = viewport.current!;
+    const element = viewport.current;
+    if (!element) return;
     const observer = new ResizeObserver(() => {
       const card = element.querySelector<HTMLElement>('.capability-card');
       if (card) setStep(card.getBoundingClientRect().width + 18);
@@ -70,6 +73,7 @@ function CapabilitySlider() {
 }
 
 export default function SafetyExperience() {
+  const router = useRouter();
   const rig = useRef<HTMLElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -83,18 +87,41 @@ export default function SafetyExperience() {
   // Authentication state
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [showPassword, setShowPassword] = useState(false);
-  const [user, setUser] = useState<{ name: string; email: string; role: string } | null>(null);
+  const [user, setUser] = useState<ApiUser | null>(null);
   const [authNotice, setAuthNotice] = useState('');
+  const [authNoticeType, setAuthNoticeType] = useState<'success' | 'error'>('success');
+  const [authBusy, setAuthBusy] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    void restoreAuthSession().then(session => {
+      if (!cancelled && session) setUser(session.user);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const rigElement = rig.current;
+    const stageElement = stage.current;
+    if (!rigElement || !stageElement) return;
+
+    let disposed = false;
     let targetScroll = 0, smoothScroll = 0;
     let targetMouseX = 0, targetMouseY = 0, mouseX = 0, mouseY = 0;
     let raf = 0, lastChapter = -1, lastTime = 0;
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
     let reduced = preference.matches;
     let stageHeight = window.innerHeight;
-    const measure = () => { stageHeight = stage.current?.clientHeight || window.innerHeight; updateScroll(); };
-    const updateScroll = () => { targetScroll = clamp(-rig.current!.getBoundingClientRect().top, 0, SCROLL_LENGTH); wake(); };
+    const measure = () => {
+      if (disposed) return;
+      stageHeight = stageElement.clientHeight || window.innerHeight;
+      updateScroll();
+    };
+    const updateScroll = () => {
+      if (disposed) return;
+      targetScroll = clamp(-rigElement.getBoundingClientRect().top, 0, SCROLL_LENGTH);
+      wake();
+    };
     const pointer = (e: PointerEvent) => {
       if (e.pointerType !== 'mouse' || window.innerWidth < 768 || reduced) return;
       targetMouseX = (e.clientX / window.innerWidth - .5) * 2;
@@ -104,6 +131,10 @@ export default function SafetyExperience() {
     const resetPointer = () => { targetMouseX = 0; targetMouseY = 0; wake(); };
     const preferenceChanged = () => { reduced = preference.matches; resetPointer(); };
     const tick = (time: number) => {
+      if (disposed) {
+        raf = 0;
+        return;
+      }
       const delta = Math.min((time - (lastTime || time - 16.67)) / 16.67, 2.5);
       lastTime = time;
       // Silky smooth, organic inertia interpolation
@@ -118,7 +149,7 @@ export default function SafetyExperience() {
       const behavior = segmentInOut(s, 1680, 1880, 2360, 2560);
       const pipe = segmentInOut(s, 2400, 2570, 2970, 3150);
       const cards = smoothstep(2980, 3320, s);
-      const style = stage.current!.style;
+      const style = stageElement.style;
       const vars: Record<string, string | number> = {
         '--hero-opacity': reduced ? Number(phase === 0) : hero,
         '--hero-y': `${reduced ? 0 : -200 * (1 - hero)}px`,
@@ -143,10 +174,12 @@ export default function SafetyExperience() {
       };
       pipeline.forEach((_, i) => { vars[`--step-${i}`] = reduced ? Number(phase === 3) : smoothstep(2420 + i * 60, 2490 + i * 60, s); });
       Object.entries(vars).forEach(([key, value]) => style.setProperty(key, String(value)));
-      if (Math.abs(targetScroll - s) > .008 || Math.abs(targetMouseX - mouseX) > .0005 || Math.abs(targetMouseY - mouseY) > .0005) raf = requestAnimationFrame(tick);
+      if (!disposed && (Math.abs(targetScroll - s) > .008 || Math.abs(targetMouseX - mouseX) > .0005 || Math.abs(targetMouseY - mouseY) > .0005)) raf = requestAnimationFrame(tick);
       else { raf = 0; lastTime = 0; }
     };
-    function wake() { if (!raf) raf = requestAnimationFrame(tick); }
+    function wake() {
+      if (!disposed && !raf) raf = requestAnimationFrame(tick);
+    }
     measure();
     window.addEventListener('scroll', updateScroll, { passive: true });
     window.addEventListener('resize', measure);
@@ -154,7 +187,9 @@ export default function SafetyExperience() {
     document.addEventListener('pointerleave', resetPointer);
     preference.addEventListener('change', preferenceChanged);
     return () => {
-      cancelAnimationFrame(raf);
+      disposed = true;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
       window.removeEventListener('scroll', updateScroll); window.removeEventListener('resize', measure);
       window.removeEventListener('pointermove', pointer); document.removeEventListener('pointerleave', resetPointer);
       preference.removeEventListener('change', preferenceChanged);
@@ -168,7 +203,9 @@ export default function SafetyExperience() {
   }, [playing]);
 
   const goTo = (index: number) => {
-    const top = rig.current!.getBoundingClientRect().top + window.scrollY + chapterPositions[index];
+    const rigElement = rig.current;
+    if (!rigElement) return;
+    const top = rigElement.getBoundingClientRect().top + window.scrollY + chapterPositions[index];
     window.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
   };
   const openModal = (type: 'demo' | 'results') => { setModal(type); setPlaying(false); dialog.current?.showModal(); };
@@ -177,6 +214,7 @@ export default function SafetyExperience() {
   const openAuth = (mode: 'signin' | 'signup') => {
     setAuthMode(mode);
     setAuthNotice('');
+    setAuthNoticeType('success');
     authDialog.current?.showModal();
   };
   const closeAuth = () => {
@@ -184,22 +222,66 @@ export default function SafetyExperience() {
     setAuthNotice('');
   };
 
-  const handleAuthSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAuthSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
-    const emailInput = form.querySelector<HTMLInputElement>('#auth-email');
-    const nameInput = form.querySelector<HTMLInputElement>('#auth-name');
-    const roleInput = form.querySelector<HTMLSelectElement>('#auth-role');
+    const data = new FormData(form);
+    const email = String(data.get('email') || '').trim().toLowerCase();
+    const password = String(data.get('password') || '');
+    const remember = data.get('remember') === 'on';
 
-    const email = emailInput?.value || 'safety.lead@factory-ai.org';
-    const name = nameInput?.value || (authMode === 'signin' ? 'Trần Văn Minh' : 'Kỹ sư An toàn');
-    const role = roleInput?.value || 'EHS Director';
+    setAuthBusy(true);
+    setAuthNotice('');
+    setAuthNoticeType('success');
+    try {
+      if (authMode === 'signup') {
+        const passwordConfirmation = String(data.get('password_confirmation') || '');
+        if (password !== passwordConfirmation) {
+          throw new AuthApiError('Mật khẩu xác nhận không khớp.', 400);
+        }
+        const jobTitle = String(data.get('job_title') || '').trim();
+        const registration = await registerAccount({
+          email,
+          password,
+          full_name: String(data.get('full_name') || '').trim(),
+          department: jobTitle.includes('Computer Vision') ? 'AI / Computer Vision' : 'EHS',
+          job_title: jobTitle,
+        });
+        if (registration.user.status !== 'active') {
+          setAuthNotice(registration.message);
+          return;
+        }
+      }
 
-    setUser({ name, email, role });
-    setAuthNotice(authMode === 'signin' ? 'Đăng nhập thành công! Đang kích hoạt phiên làm việc...' : 'Đăng ký thành công! Trạm giám sát đã sẵn sàng.');
-    setTimeout(() => {
-      closeAuth();
-    }, 650);
+      const session = await loginAccount(email, password);
+      saveAuthSession(session, remember);
+      setUser(session.user);
+      const destination = defaultAppPath(session.user);
+      if (!destination) {
+        setAuthNoticeType('error');
+        setAuthNotice('Tài khoản chưa được quản trị viên phân quyền truy cập hệ thống.');
+        return;
+      }
+      setAuthNotice(authMode === 'signin' ? 'Đăng nhập thành công.' : 'Đăng ký và đăng nhập thành công.');
+      window.setTimeout(() => {
+        closeAuth();
+        router.push(destination);
+      }, 650);
+    } catch (error) {
+      setAuthNoticeType('error');
+      setAuthNotice(error instanceof AuthApiError ? error.message : 'Không thể xác thực tài khoản.');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setUser(null);
+    try {
+      await logoutAccount();
+    } catch {
+      // The local session is always cleared even when the backend is unavailable.
+    }
   };
 
   return <main>
@@ -220,8 +302,8 @@ export default function SafetyExperience() {
             {user ? (
               <div className="user-badge">
                 <span className="user-avatar"><User size={13} /></span>
-                <span className="user-info"><strong>{user.name}</strong><small>{user.role}</small></span>
-                <button className="user-logout" onClick={() => setUser(null)} title="Đăng xuất" aria-label="Đăng xuất"><LogOut size={13} /></button>
+                <span className="user-info"><strong>{user.full_name}</strong><small>{userRole(user)}</small></span>
+                <button className="user-logout" onClick={() => void handleLogout()} title="Đăng xuất" aria-label="Đăng xuất"><LogOut size={13} /></button>
               </div>
             ) : (
               <div className="auth-btns">
@@ -305,7 +387,7 @@ export default function SafetyExperience() {
 
     <section id="closing" className="closing-section">
       <div className="closing-top"><div className="eyebrow"><span className="tiny-square" /> BUILT TO SEE THE BIGGER PICTURE</div><span className="mono muted">AN ACADEMIC RESEARCH PROJECT</span></div>
-      <div className="closing-content"><h2>FROM CAMERA<br />TO ACTIONABLE<br /><span>SAFETY.</span></h2><div className="closing-detail"><span className="closing-symbol"><ShieldCheck size={37} strokeWidth={1} /></span><p>A computer vision system designed to monitor protective equipment, understand unsafe behavior and support faster workplace safety response.</p><div className="cta-actions"><button className="primary-button" onClick={() => openModal('demo')}><Play size={14} fill="currentColor" /> Watch Demo <ArrowUpRight size={17} /></button><button className="text-button" onClick={() => openModal('results')}>Explore Detection Results <ArrowUpRight size={16} /></button><button className="text-button" onClick={() => openAuth(user ? 'signin' : 'signin')}><Shield size={14} /> {user ? `Tài khoản: ${user.name} (${user.role})` : 'Cổng Đăng Nhập Giám Sát'} <ArrowUpRight size={16} /></button></div><span className="academic-note">Research in progress. Designed to assist safety personnel.</span></div></div>
+      <div className="closing-content"><h2>FROM CAMERA<br />TO ACTIONABLE<br /><span>SAFETY.</span></h2><div className="closing-detail"><span className="closing-symbol"><ShieldCheck size={37} strokeWidth={1} /></span><p>A computer vision system designed to monitor protective equipment, understand unsafe behavior and support faster workplace safety response.</p><div className="cta-actions"><button className="primary-button" onClick={() => openModal('demo')}><Play size={14} fill="currentColor" /> Watch Demo <ArrowUpRight size={17} /></button><button className="text-button" onClick={() => openModal('results')}>Explore Detection Results <ArrowUpRight size={16} /></button><button className="text-button" onClick={() => openAuth('signin')}><Shield size={14} /> {user ? 'Tài khoản: ' + user.full_name + ' (' + userRole(user) + ')' : 'Cổng Đăng Nhập Giám Sát'} <ArrowUpRight size={16} /></button></div><span className="academic-note">Research in progress. Designed to assist safety personnel.</span></div></div>
       <div className="project-details"><p>Deep Learning and Computer Vision for PPE Compliance<br className="desktop-break" /> and Unsafe Behavior Recognition</p><div><span>YOLO <small>OBJECT DETECTION</small></span><span>VideoMAE <small>VIDEO CLASSIFICATION</small></span></div></div>
       <footer className="site-footer"><span className="footer-brand"><ScanLine size={20} /> AI SAFETY MONITORING</span><span>SEE RISK. <span className="muted">BEFORE IT BECOMES AN INCIDENT.</span></span><button onClick={() => goTo(0)}>BACK TO TOP <ArrowUpRight size={14} /></button></footer>
     </section>
@@ -343,19 +425,19 @@ export default function SafetyExperience() {
         </div>
 
         {authNotice && (
-          <div className="auth-alert" role="status">
-            <ShieldCheck size={16} />
+          <div className={'auth-alert ' + authNoticeType} role={authNoticeType === 'error' ? 'alert' : 'status'}>
+            {authNoticeType === 'error' ? <TriangleAlert size={16} /> : <ShieldCheck size={16} />}
             <span>{authNotice}</span>
           </div>
         )}
 
-        <form className="auth-form" onSubmit={handleAuthSubmit}>
+        <form key={authMode} className="auth-form" onSubmit={handleAuthSubmit}>
           {authMode === 'signup' && (
             <div className="form-group">
               <label htmlFor="auth-name">Họ và tên cán bộ</label>
               <div className="input-wrapper">
                 <User size={15} />
-                <input id="auth-name" type="text" required placeholder="Ví dụ: Nguyễn Văn An" defaultValue="Alex Trần" />
+                <input id="auth-name" name="full_name" type="text" required minLength={2} maxLength={150} autoComplete="name" placeholder="Ví dụ: Nguyễn Văn An" />
               </div>
             </div>
           )}
@@ -364,7 +446,7 @@ export default function SafetyExperience() {
             <label htmlFor="auth-email">Email công vụ / Doanh nghiệp</label>
             <div className="input-wrapper">
               <Mail size={15} />
-              <input id="auth-email" type="email" required placeholder="name@industrial.corp" defaultValue={authMode === 'signin' ? "safety.lead@factory-ai.org" : "engineer@factory-ai.org"} />
+              <input id="auth-email" name="email" type="email" required maxLength={320} autoComplete="email" placeholder="name@industrial.corp" />
             </div>
           </div>
 
@@ -373,7 +455,7 @@ export default function SafetyExperience() {
               <label htmlFor="auth-role">Bộ phận & Chức danh</label>
               <div className="input-wrapper">
                 <Shield size={15} />
-                <select id="auth-role" defaultValue="Chuyên viên An toàn Lao động (EHS)">
+                <select id="auth-role" name="job_title" defaultValue="Chuyên viên An toàn (EHS Lead)">
                   <option value="Chuyên viên An toàn (EHS Lead)">Chuyên viên An toàn Lao động (EHS Lead)</option>
                   <option value="Giám sát viên Hiện trường">Giám sát viên Hiện trường (Site Supervisor)</option>
                   <option value="Kỹ sư Computer Vision / AI">Kỹ sư Computer Vision / AI</option>
@@ -387,14 +469,14 @@ export default function SafetyExperience() {
             <div className="label-with-link">
               <label htmlFor="auth-pass">Mật khẩu trạm</label>
               {authMode === 'signin' && (
-                <button type="button" className="forgot-link" onClick={() => setAuthNotice('Yêu cầu đặt lại mật khẩu đã được gửi đến quản trị viên.')}>
+                <button type="button" className="forgot-link" onClick={() => { setAuthNoticeType('error'); setAuthNotice('Chức năng đặt lại mật khẩu chưa được kích hoạt.'); }}>
                   Quên mật khẩu?
                 </button>
               )}
             </div>
             <div className="input-wrapper">
               <Lock size={15} />
-              <input id="auth-pass" type={showPassword ? 'text' : 'password'} required placeholder="••••••••••••" defaultValue="SafetyVision2026@" />
+              <input id="auth-pass" name="password" type={showPassword ? 'text' : 'password'} required minLength={authMode === 'signup' ? 8 : 1} maxLength={128} autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'} placeholder="••••••••••••" />
               <button type="button" className="toggle-pass" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}>
                 {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
@@ -406,45 +488,25 @@ export default function SafetyExperience() {
               <label htmlFor="auth-pass-confirm">Xác nhận mật khẩu</label>
               <div className="input-wrapper">
                 <KeyRound size={15} />
-                <input id="auth-pass-confirm" type={showPassword ? 'text' : 'password'} required placeholder="••••••••••••" defaultValue="SafetyVision2026@" />
+                <input id="auth-pass-confirm" name="password_confirmation" type={showPassword ? 'text' : 'password'} required minLength={8} maxLength={128} autoComplete="new-password" placeholder="••••••••••••" />
               </div>
             </div>
           )}
 
           <div className="form-options">
             <label className="checkbox-label">
-              <input type="checkbox" defaultChecked />
+              <input name="remember" type="checkbox" defaultChecked />
               <span>{authMode === 'signin' ? 'Duy trì phiên bảo mật trên thiết bị này' : 'Cam kết tuân thủ quy chuẩn giám sát an toàn'}</span>
             </label>
           </div>
 
           <div className="auth-submit-row">
-            <button type="submit" className="primary-button auth-submit-btn">
+            <button type="submit" className="primary-button auth-submit-btn" disabled={authBusy}>
               <ShieldCheck size={15} />
-              <span>{authMode === 'signin' ? 'Xác thực & Vào hệ thống' : 'Đăng ký tài khoản trạm'}</span>
+              <span>{authBusy ? 'Đang kết nối...' : authMode === 'signin' ? 'Xác thực & Vào hệ thống' : 'Đăng ký tài khoản trạm'}</span>
               <ArrowUpRight size={15} />
             </button>
           </div>
-
-          {authMode === 'signin' && (
-            <div className="quick-access">
-              <span className="mono">TRUY CẬP NHANH BẰNG TÀI KHOẢN MẪU</span>
-              <div className="quick-buttons">
-                <button type="button" onClick={() => {
-                  setUser({ name: 'Trần Văn Minh', email: 'minh.tv@safety.corp', role: 'EHS Director' });
-                  closeAuth();
-                }}>
-                  <HardHat size={13} /> EHS Director
-                </button>
-                <button type="button" onClick={() => {
-                  setUser({ name: 'Lê Hoàng Hải', email: 'hai.lh@vision.ai', role: 'CV Researcher' });
-                  closeAuth();
-                }}>
-                  <ScanLine size={13} /> AI Engineer
-                </button>
-              </div>
-            </div>
-          )}
         </form>
       </div>
     </dialog>

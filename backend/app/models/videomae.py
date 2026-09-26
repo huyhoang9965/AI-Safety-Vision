@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 from pathlib import Path
+from threading import Lock
 
 from app.config import get_settings
 from app.models.base import InferenceOutput, ModelNotConnectedError
@@ -16,53 +17,66 @@ class VideoMAEClassifier:
         self._num_frames = 16
         self._image_size = 224
         self._device = "cpu"
+        self._load_lock = Lock()
 
     def _load(self):
         if self._model is not None:
             return self._model
-        if not self.weight_path.is_file():
-            raise ModelNotConnectedError(f"Checkpoint not found: {self.weight_path}")
+        with self._load_lock:
+            if self._model is not None:
+                return self._model
+            if not self.weight_path.is_file():
+                raise ModelNotConnectedError(f"Checkpoint not found: {self.weight_path}")
 
-        try:
-            import torch
-            from transformers import VideoMAEConfig, VideoMAEForVideoClassification
-        except ImportError as exc:
-            raise ModelNotConnectedError("torch and transformers are required for VideoMAE") from exc
+            try:
+                import torch
+                from transformers import VideoMAEConfig, VideoMAEForVideoClassification
+            except ImportError as exc:
+                raise ModelNotConnectedError("torch and transformers are required for VideoMAE") from exc
 
-        checkpoint = torch.load(self.weight_path, map_location="cpu", weights_only=False, mmap=True)
-        state_dict = checkpoint.get("model_state_dict")
-        self._class_names = list(checkpoint.get("class_names", []))
-        self._num_frames = int(checkpoint.get("num_frames", 16))
-        self._image_size = int(checkpoint.get("image_size", 224))
-        if not state_dict or len(self._class_names) != 8:
-            raise ModelNotConnectedError("VideoMAE checkpoint metadata is incomplete")
+            checkpoint = torch.load(self.weight_path, map_location="cpu", weights_only=False, mmap=True)
+            state_dict = checkpoint.get("model_state_dict")
+            self._class_names = list(checkpoint.get("class_names", []))
+            self._num_frames = int(checkpoint.get("num_frames", 16))
+            self._image_size = int(checkpoint.get("image_size", 224))
+            if not state_dict or len(self._class_names) != 8:
+                raise ModelNotConnectedError("VideoMAE checkpoint metadata is incomplete")
 
-        config = VideoMAEConfig(
-            image_size=self._image_size,
-            num_frames=self._num_frames,
-            num_labels=len(self._class_names),
-            id2label={index: label for index, label in enumerate(self._class_names)},
-            label2id={label: index for index, label in enumerate(self._class_names)},
-            problem_type="multi_label_classification",
-        )
-        model = VideoMAEForVideoClassification(config)
-        try:
-            model.load_state_dict(state_dict, strict=True)
-        except RuntimeError as exc:
-            raise ModelNotConnectedError(f"VideoMAE checkpoint architecture mismatch: {exc}") from exc
+            config = VideoMAEConfig(
+                image_size=self._image_size,
+                num_frames=self._num_frames,
+                num_labels=len(self._class_names),
+                id2label={index: label for index, label in enumerate(self._class_names)},
+                label2id={label: index for index, label in enumerate(self._class_names)},
+                problem_type="multi_label_classification",
+            )
+            try:
+                with torch.device("meta"):
+                    model = VideoMAEForVideoClassification(config)
+                model.load_state_dict(state_dict, strict=True, assign=True)
+            except TypeError:
+                model = VideoMAEForVideoClassification(config)
+                model.load_state_dict(state_dict, strict=True)
+            except RuntimeError as exc:
+                raise ModelNotConnectedError(f"VideoMAE checkpoint architecture mismatch: {exc}") from exc
 
-        configured_device = get_settings().device
-        self._device = (
-            configured_device
-            if configured_device != "auto"
-            else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
-        model.to(self._device)
-        model.eval()
-        self._model = model
-        del checkpoint, state_dict
-        gc.collect()
-        return self._model
+            configured_device = get_settings().device
+            self._device = (
+                configured_device
+                if configured_device != "auto"
+                else ("cuda" if torch.cuda.is_available() else "cpu")
+            )
+            if self._device == "cpu":
+                torch.set_num_threads(max(1, get_settings().ai_cpu_threads))
+            model.to(self._device)
+            model.eval()
+            self._model = model
+            del checkpoint, state_dict
+            gc.collect()
+            return self._model
+
+    def warmup(self) -> None:
+        self._load()
 
     def infer(self, video_path: Path, output_dir: Path) -> InferenceOutput:
         del output_dir

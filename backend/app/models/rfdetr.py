@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from threading import Lock
 import cv2
 
 from app.config import get_settings
@@ -34,6 +35,7 @@ class RFDETRDetector:
     def __init__(self, weight_path: Path):
         self.weight_path = weight_path
         self._model = None
+        self._load_lock = Lock()
         self._people = PersonLocator(get_settings().checkpoint_storage_dir / "yolov8s.pt")
         self._reset_tracks()
 
@@ -45,14 +47,21 @@ class RFDETRDetector:
     def _load(self):
         if self._model is not None:
             return self._model
-        if not self.weight_path.is_file():
-            raise ModelNotConnectedError(f"Checkpoint not found: {self.weight_path}")
-        try:
-            from rfdetr import RFDETRLarge
-            self._model = RFDETRLarge(pretrain_weights=str(self.weight_path), num_classes=len(PPE_CLASSES))
-        except Exception as exc:
-            raise ModelNotConnectedError(f"RF-DETR checkpoint could not be loaded: {exc}") from exc
-        return self._model
+        with self._load_lock:
+            if self._model is not None:
+                return self._model
+            if not self.weight_path.is_file():
+                raise ModelNotConnectedError(f"Checkpoint not found: {self.weight_path}")
+            try:
+                from rfdetr import RFDETRLarge
+                self._model = RFDETRLarge(pretrain_weights=str(self.weight_path), num_classes=len(PPE_CLASSES))
+            except Exception as exc:
+                raise ModelNotConnectedError(f"RF-DETR checkpoint could not be loaded: {exc}") from exc
+            return self._model
+
+    def warmup(self) -> None:
+        self._load()
+        self._people.warmup()
 
     def _person_ppe(self, frame, person):
         h,w = frame.shape[:2]
@@ -121,6 +130,12 @@ class RFDETRDetector:
         self._reset_tracks()
         output = render_detection_video(video_path,output_dir,'rf-detr',self._predict_frame,
                                         inference_fps=get_settings().rf_detr_inference_fps)
-        output.metrics['person_locator'] = 'YOLOv8s COCO + overlapping tiles'
+        output.metrics['person_locator'] = (
+            'YOLOv8s COCO + overlapping tiles'
+            if get_settings().person_locator_tiling
+            else 'YOLOv8s COCO + single full-frame pass'
+        )
+        output.metrics['person_locator_tiling'] = get_settings().person_locator_tiling
+        output.metrics['person_locator_input_size'] = get_settings().person_locator_input_size
         output.metrics['pipeline_version'] = 'person-v1'
         return output
