@@ -27,6 +27,7 @@ class AlertItem(BaseModel):
     confidence: float | None
     object_count: int
     detected_at: datetime
+    overdue: bool = False
     acknowledged_at: datetime | None
     resolved_at: datetime | None
     resolution_note: str | None
@@ -46,7 +47,11 @@ class AlertItem(BaseModel):
 
 class AlertSummary(BaseModel):
     total: int
+    overdue: int = 0
     new: int
+    critical_new: int = 0
+    high_new: int = 0
+    acknowledgeable_new: int = 0
     acknowledged: int
     resolved: int
     dismissed: int
@@ -89,3 +94,9 @@ class AlertActionResponse(BaseModel):
     message: str
     alert: AlertItem | None = None
     incident_id: UUID | None = None
+
+
+class AlertBulkActionResponse(BaseModel):
+    success: bool
+    message: str
+    acknowledged_count: int = Field(ge=0)

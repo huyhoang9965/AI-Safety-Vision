@@ -6,7 +6,8 @@ from fastapi.responses import FileResponse, Response
 
 from app.api.auth import camera_viewer
 from app.schemas import VideoItem
-from app.services.video_catalog import list_test_videos, resolve_video
+from app.services.video_catalog import list_test_videos, resolve_stream_video, resolve_video
+from app.services.video_playback import playback_path, playback_url
 
 router = APIRouter(
     prefix="/api/videos",
@@ -30,7 +31,7 @@ def get_test_videos() -> list[VideoItem]:
             width=video.width,
             height=video.height,
             fps=video.fps,
-            stream_url=f"/api/videos/{video.id}/stream",
+            stream_url=playback_url(video.id, video.filepath),
         )
         for video in list_test_videos()
     ]
@@ -41,17 +42,23 @@ def stream_test_video(video_id: int) -> FileResponse:
     # Only repository-owned test clips are resolved here. Keeping this media
     # route public lets the native <video> element use HTTP range requests;
     # the protected catalog still controls discovery of the available clips.
-    video = resolve_video(video_id)
+    video = resolve_stream_video(video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Test video not found")
     if not video.filepath.is_file():
         raise HTTPException(status_code=404, detail=f"Video file is missing: {video.filename}")
+    source = playback_path(video.filepath)
     return FileResponse(
-        path=video.filepath,
+        path=source,
         media_type="video/mp4",
         filename=video.filename,
         content_disposition_type="inline",
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={
+            "Cache-Control": "public, max-age=3600" if source != video.filepath else "public, max-age=5, must-revalidate",
+            # Even requests without Origin must vary: Demo preloads must not
+            # poison the cache for a later CORS video/canvas request.
+            "Vary": "Origin",
+        },
     )
 
 

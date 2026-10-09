@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import AuthSessionKeeper from '@/components/auth-session-keeper';
 
 export const metadata: Metadata = {
   title: 'AI Safety Monitoring — See risk. See what’s next.',
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}</body></html>;
+  return <html lang="en"><body><AuthSessionKeeper />{children}</body></html>;
 }

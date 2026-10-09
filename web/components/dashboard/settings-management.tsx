@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity, BellRing, Bot, Check, ChevronRight, Clock3, Database, HardDrive,
   History, Info, KeyRound, LoaderCircle, MonitorCog, RefreshCw, RotateCcw,
@@ -41,13 +43,13 @@ function Title({icon,title,text}:{icon:ReactNode;title:string;text:string}){retu
 export default function SettingsManagement(){
   const[data,setData]=useState<Response|null>(null),[form,setForm]=useState<SettingsData|null>(null);
   const[base,setBase]=useState(''),[tab,setTab]=useState<Tab>('general'),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[error,setError]=useState(''),[toast,setToast]=useState('');
-  const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await fetch(API_BASE+'/api/settings',{headers:headers()});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(message(p));const d=p as Response;setData(d);setForm(d.settings);setBase(JSON.stringify(d.settings));}catch(e){setError(e instanceof Error?e.message:'Không thể tải cấu hình.');}finally{setLoading(false);}},[]);
+  const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await authenticatedFetch(API_BASE+'/api/settings',{headers:headers()});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(message(p));const d=p as Response;setData(d);setForm(d.settings);setBase(JSON.stringify(d.settings));}catch(e){setError(e instanceof Error?e.message:'Không thể tải cấu hình.');}finally{setLoading(false);}},[]);
   useEffect(()=>{void load();},[load]);useEffect(()=>{if(!toast)return;const t=window.setTimeout(()=>setToast(''),3000);return()=>clearTimeout(t);},[toast]);
   const dirty=useMemo(()=>!!form&&!!base&&JSON.stringify(form)!==base,[form,base]);
   useEffect(()=>{const fn=(e:BeforeUnloadEvent)=>{if(dirty)e.preventDefault();};addEventListener('beforeunload',fn);return()=>removeEventListener('beforeunload',fn);},[dirty]);
   function update<S extends keyof SettingsData,K extends keyof SettingsData[S]>(s:S,k:K,v:SettingsData[S][K]){setForm(f=>f?{...f,[s]:{...f[s],[k]:v}}:f);}
-  async function save(){if(!form||!dirty||saving)return;setSaving(true);setError('');try{const r=await fetch(API_BASE+'/api/settings',{method:'POST',headers:headers(true),body:JSON.stringify(form)});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(message(p));const d=(p as {settings:Response}).settings;setData(d);setForm(d.settings);setBase(JSON.stringify(d.settings));setToast('Đã lưu và áp dụng cấu hình hệ thống.');}catch(e){setError(e instanceof Error?e.message:'Không thể lưu cấu hình.');}finally{setSaving(false);}}
-  async function reset(){if(!confirm('Khôi phục toàn bộ chính sách về mặc định?'))return;setSaving(true);try{const r=await fetch(API_BASE+'/api/settings/reset',{method:'POST',headers:headers(true)});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(message(p));const d=(p as {settings:Response}).settings;setData(d);setForm(d.settings);setBase(JSON.stringify(d.settings));setToast('Đã khôi phục cấu hình mặc định.');}catch(e){setError(e instanceof Error?e.message:'Không thể khôi phục.');}finally{setSaving(false);}}
+  async function save(){if(!form||!dirty||saving)return;setSaving(true);setError('');try{const r=await authenticatedFetch(API_BASE+'/api/settings',{method:'POST',headers:headers(true),body:JSON.stringify(form)});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(message(p));const d=(p as {settings:Response}).settings;setData(d);setForm(d.settings);setBase(JSON.stringify(d.settings));setToast('Đã lưu và áp dụng cấu hình hệ thống.');}catch(e){setError(e instanceof Error?e.message:'Không thể lưu cấu hình.');}finally{setSaving(false);}}
+  async function reset(){if(!confirm('Khôi phục toàn bộ chính sách về mặc định?'))return;setSaving(true);try{const r=await authenticatedFetch(API_BASE+'/api/settings/reset',{method:'POST',headers:headers(true)});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(message(p));const d=(p as {settings:Response}).settings;setData(d);setForm(d.settings);setBase(JSON.stringify(d.settings));setToast('Đã khôi phục cấu hình mặc định.');}catch(e){setError(e instanceof Error?e.message:'Không thể khôi phục.');}finally{setSaving(false);}}
   if(loading)return <div className={styles.loading}><LoaderCircle/><strong>Đang tải cấu hình hệ thống</strong><span>Kiểm tra chính sách của tổ chức...</span></div>;
   if(!data||!form)return <div className={styles.loading}><Server/><strong>Không thể mở cấu hình</strong><span>{error}</span><button onClick={()=>void load()}>Thử lại</button></div>;
   const status=[

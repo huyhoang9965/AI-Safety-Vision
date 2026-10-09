@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.alert_schemas import (
     AlertActionRequest,
     AlertActionResponse,
+    AlertBulkActionResponse,
     AlertIncidentRequest,
     AlertListResponse,
 )
@@ -38,6 +39,7 @@ def alerts(
     period: Literal["all", "today", "24h", "7d", "30d"] = "24h",
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    overdue: bool = False,
 ) -> AlertListResponse:
     try:
         payload = alert_service.list_alerts(
@@ -51,6 +53,7 @@ def alerts(
             period,
             limit,
             offset,
+            overdue=overdue,
         )
         return AlertListResponse(**payload)
     except Exception as exc:
@@ -69,6 +72,22 @@ def _action_error(exc: Exception) -> HTTPException:
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Không thể cập nhật cảnh báo",
     )
+
+
+@router.post("/acknowledge-all", response_model=AlertBulkActionResponse)
+def acknowledge_all(
+    body: AlertActionRequest,
+    user: Annotated[dict, Depends(event_acknowledger)],
+) -> AlertBulkActionResponse:
+    try:
+        count = alert_service.acknowledge_all(user, body.note)
+        return AlertBulkActionResponse(
+            success=True,
+            message=f"Đã xác nhận {count} cảnh báo" if count else "Không còn cảnh báo mới cần xác nhận",
+            acknowledged_count=count,
+        )
+    except Exception as exc:
+        raise _action_error(exc) from exc
 
 
 @router.post("/{event_id}/acknowledge", response_model=AlertActionResponse)

@@ -158,6 +158,45 @@ def create_inference(
     return int(row["id"])
 
 
+def find_cached_inference(conn, filepath: Path, model_name: str, camera_id, signature: str):
+    """Reuse completed demo analysis after reloads; camera ownership is resolved first."""
+    return conn.execute(
+        """
+        SELECT ih.id, ih.output_video, ih.processing_time, ih.metrics,
+            COALESCE((SELECT jsonb_agg(e.id::text ORDER BY (e.raw_payload->>'candidate_index')::int, e.id)
+                FROM safety.safety_events e WHERE e.inference_id = ih.id), '[]'::jsonb) AS event_ids
+        FROM public.inference_history ih
+        JOIN public.videos v ON v.id = ih.video_id
+        JOIN public.models m ON m.id = ih.model_id
+        WHERE v.filepath = %s AND m.name = %s
+          AND ih.camera_id IS NOT DISTINCT FROM %s::uuid
+          AND ih.status = 'completed' AND ih.metrics->>'cache_signature' = %s
+          AND COALESCE(ih.metrics->>'events_persisted', 'false') = 'true'
+        ORDER BY ih.id DESC LIMIT 1
+        """, (str(filepath),model_name,camera_id,signature),
+    ).fetchone()
+
+
+def mark_events_persisted(inference_id: int):
+    with connection() as conn:
+        conn.execute("UPDATE public.inference_history SET metrics = metrics || '{\"events_persisted\":true}'::jsonb WHERE id = %s",(inference_id,))
+
+
+def retire_obsolete_demo_events(camera_id, filename: str, event_code: str, current_event_ids, model_name: str = 'VideoMAE'):
+    """Keep history and reviewed decisions; retire superseded demo detections."""
+    with connection() as conn:
+        conn.execute(
+            """UPDATE safety.safety_events e SET status = 'dismissed', resolved_at = now(),
+                   resolution_note = 'Đã phân tích lại clip: cảnh báo cũ không có đối tượng vi phạm tương ứng trong kết quả mới.'
+               FROM safety.event_types et
+               WHERE e.event_type_id = et.id AND et.code = %s
+                 AND e.camera_id = %s AND e.raw_payload->>'source_video' = %s
+                 AND e.raw_payload->>'model' = %s AND e.status = 'new'
+                 AND e.id <> ALL(%s::uuid[])""",
+            (event_code,camera_id,filename,model_name,list(current_event_ids)),
+        )
+
+
 def complete_inference(
     inference_id: int,
     processing_time: float,
@@ -217,6 +256,7 @@ def create_safety_events(
     inference_id: int,
     camera_id: UUID | str,
     candidates: Sequence[dict[str, Any]],
+    created_ids: list[str] | None = None,
 ) -> list[str]:
     """Persist dashboard events and their alert rows in one transaction."""
     event_ids: list[str] = []
@@ -224,6 +264,8 @@ def create_safety_events(
         for candidate in candidates:
             raw_payload = candidate.get("raw_payload", {})
             evidence = raw_payload.get("evidence", {})
+            # Serialize legacy lookup and inserts as well as the unique-key path.
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"event:{camera_id}:{candidate['event_code']}:{raw_payload.get('source_video')}",))
             prior = conn.execute(
                 """
                 SELECT e.id
@@ -246,6 +288,17 @@ def create_safety_events(
                 ),
             ).fetchone()
             if prior is not None:
+                conn.execute(
+                    """UPDATE safety.safety_events SET title = %s, snapshot_url = %s,
+                       thumbnail_url = %s, bounding_boxes = %s::jsonb, raw_payload = %s::jsonb,
+                       inference_id = %s, confidence = %s, description = %s,
+                       video_url = %s WHERE id = %s""",
+                    (candidate["title"],candidate.get("snapshot_url"),candidate.get("thumbnail_url"),
+                     json.dumps(candidate.get("bounding_boxes",[])),json.dumps(raw_payload),inference_id,
+                     candidate.get("confidence"),candidate.get("description"),candidate.get("video_url"),prior["id"]),
+                )
+                conn.execute("UPDATE safety.alerts SET title = %s, message = %s WHERE event_id = %s",
+                    (candidate["title"],candidate.get("description") or candidate["title"],prior["id"]))
                 event_ids.append(str(prior["id"]))
                 continue
             row = conn.execute(
@@ -302,6 +355,8 @@ def create_safety_events(
 
             event_id = row["id"]
             event_ids.append(str(event_id))
+            if created_ids is not None:
+                created_ids.append(str(event_id))
             detected_object = candidate.get("detected_object")
             if detected_object:
                 conn.execute(

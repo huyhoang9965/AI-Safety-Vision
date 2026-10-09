@@ -37,14 +37,14 @@
   border-radius: 10px;
   background: #fff;
   color: #536077;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem + 2px);
   font-weight: 700;
   text-decoration: none;
 }
 
 .eyebrow {
   color: #2f6fec;
-  font-size: 0.67rem;
+  font-size: calc(0.67rem + 2px);
   font-weight: 800;
   letter-spacing: 0.15em;
 }
@@ -111,7 +111,7 @@
   max-width: 750px;
   margin: 0;
   color: #68748a;
-  font-size: 0.69rem;
+  font-size: calc(0.69rem + 2px);
   line-height: 1.55;
 }
 
@@ -122,7 +122,7 @@
   border-radius: 7px;
   background: rgba(255,255,255,.8);
   color: var(--accent);
-  font-size: 0.57rem;
+  font-size: calc(0.57rem + 3px);
   font-style: normal;
   font-weight: 850;
   letter-spacing: 0.08em;
@@ -163,19 +163,19 @@
 .featureGrid strong {
   align-self: end;
   color: #344056;
-  font-size: 0.75rem;
+  font-size: calc(0.75rem + 2px);
 }
 
 .featureGrid p {
   margin: 2px 0 5px;
   color: #808a9c;
-  font-size: 0.64rem;
+  font-size: calc(0.64rem + 2px);
   line-height: 1.5;
 }
 
 .featureGrid small {
   color: #a2a9b6;
-  font-size: 0.56rem;
+  font-size: calc(0.56rem + 3px);
 }
 
 .detailGrid {
@@ -209,7 +209,7 @@
 
 .panelHeading span {
   color: #929bab;
-  font-size: 0.64rem;
+  font-size: calc(0.64rem + 2px);
 }
 
 .dataList,
@@ -243,20 +243,20 @@
   border-radius: 7px;
   background: #eef3fc;
   color: #5d6f91;
-  font-size: 0.57rem;
+  font-size: calc(0.57rem + 3px);
   font-weight: 800;
 }
 
 .dataList code {
   overflow: hidden;
   color: #46536a;
-  font-size: 0.66rem;
+  font-size: calc(0.66rem + 2px);
   text-overflow: ellipsis;
 }
 
 .dataList em {
   color: #22936b;
-  font-size: 0.57rem;
+  font-size: calc(0.57rem + 3px);
   font-style: normal;
   font-weight: 750;
 }
@@ -269,7 +269,7 @@
 .checkList p {
   margin: 0;
   color: #566176;
-  font-size: 0.66rem;
+  font-size: calc(0.66rem + 2px);
   font-weight: 600;
 }
 

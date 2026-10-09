@@ -18,8 +18,25 @@ def organization_ids(user: dict[str, Any]) -> list[UUID]:
     return [membership["organization_id"] for membership in user.get("memberships", [])]
 
 
+def acknowledgeable_organization_ids(user: dict[str, Any]) -> list[UUID]:
+    return [
+        membership["organization_id"]
+        for membership in user.get("memberships", [])
+        if "event.acknowledge" in membership.get("permissions", [])
+    ]
+
+
+def overdue_condition(alias: str = "e") -> str:
+    return (
+        f"({alias}.status = 'new' "
+        f"AND {alias}.acknowledged_at IS NULL "
+        f"AND {alias}.resolved_at IS NULL "
+        f"AND {alias}.detected_at < now() - interval '24 hours')"
+    )
+
+
 def _alert_select() -> str:
-    return """
+    return f"""
         SELECT
             e.id,
             et.code AS event_code,
@@ -31,6 +48,7 @@ def _alert_select() -> str:
             e.confidence::float8 AS confidence,
             e.object_count,
             e.detected_at,
+            {overdue_condition()} AS overdue,
             e.acknowledged_at,
             e.resolved_at,
             e.resolution_note,
@@ -104,6 +122,7 @@ def list_alerts(
     period: str,
     limit: int,
     offset: int,
+    overdue: bool = False,
 ) -> dict[str, Any]:
     organizations = organization_ids(user)
     if not organizations:
@@ -121,6 +140,8 @@ def list_alerts(
     if status:
         conditions.append("e.status = %s::safety.event_status")
         params.append(status)
+    if overdue:
+        conditions.append(overdue_condition())
     if severity:
         conditions.append("e.severity = %s::safety.severity_level")
         params.append(severity)
@@ -161,8 +182,8 @@ def list_alerts(
             params,
         ).fetchone()
         rows = conn.execute(
-            _alert_select() + where + """
-                ORDER BY e.detected_at DESC,
+            _alert_select() + where + f"""
+                ORDER BY {overdue_condition()} DESC, e.detected_at DESC,
                     CASE e.status WHEN 'new' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
                     CASE e.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
                         WHEN 'medium' THEN 2 ELSE 3 END
@@ -171,10 +192,17 @@ def list_alerts(
             [*params, limit, offset],
         ).fetchall()
         summary = conn.execute(
-            """
+            f"""
             SELECT
                 count(*)::int AS total,
+                count(*) FILTER (WHERE {overdue_condition()})::int AS overdue,
                 count(*) FILTER (WHERE status = 'new')::int AS new,
+                count(*) FILTER (WHERE status = 'new' AND severity = 'critical')::int AS critical_new,
+                count(*) FILTER (WHERE status = 'new' AND severity = 'high')::int AS high_new,
+                count(*) FILTER (
+                    WHERE status = 'new' AND resolved_at IS NULL
+                      AND organization_id = ANY(%s::uuid[])
+                )::int AS acknowledgeable_new,
                 count(*) FILTER (WHERE status = 'acknowledged')::int AS acknowledged,
                 count(*) FILTER (WHERE status = 'resolved')::int AS resolved,
                 count(*) FILTER (WHERE status = 'dismissed')::int AS dismissed,
@@ -190,10 +218,10 @@ def list_alerts(
                 avg(extract(epoch FROM (acknowledged_at - detected_at)))
                     FILTER (WHERE acknowledged_at IS NOT NULL)::float8
                     AS average_acknowledge_seconds
-            FROM safety.safety_events
+            FROM safety.safety_events e
             WHERE organization_id = ANY(%s::uuid[])
             """,
-            (organizations,),
+            (acknowledgeable_organization_ids(user), organizations),
         ).fetchone()
         event_types = conn.execute(
             """
@@ -243,6 +271,32 @@ def list_alerts(
             "cameras": [dict(row) for row in cameras],
         },
     }
+
+
+def acknowledge_all(user: dict[str, Any], note: str | None) -> int:
+    # Bulk operations must honor the permission in each organization separately.
+    organizations = acknowledgeable_organization_ids(user)
+    if not organizations:
+        return 0
+    with connection() as conn:
+        row = conn.execute(
+            """
+            WITH acknowledged AS (
+                UPDATE safety.safety_events
+                SET status = 'acknowledged',
+                    acknowledged_at = COALESCE(acknowledged_at, now()),
+                    acknowledged_by = %s,
+                    resolution_note = COALESCE(%s, resolution_note)
+                WHERE organization_id = ANY(%s::uuid[])
+                  AND status = 'new'
+                  AND resolved_at IS NULL
+                RETURNING id
+            )
+            SELECT count(*)::int AS acknowledged_count FROM acknowledged
+            """,
+            (user["id"], (note or "").strip() or None, organizations),
+        ).fetchone()
+        return int(row["acknowledged_count"])
 
 
 def acknowledge(
@@ -330,6 +384,10 @@ def _empty_summary() -> dict[str, Any]:
     return {
         "total": 0,
         "new": 0,
+        "critical_new": 0,
+        "high_new": 0,
+        "acknowledgeable_new": 0,
+        "overdue": 0,
         "acknowledged": 0,
         "resolved": 0,
         "dismissed": 0,

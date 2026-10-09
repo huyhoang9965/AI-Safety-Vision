@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,6 +38,17 @@ class Settings:
     ai_max_concurrent_inference: int
     video_output_max_width: int
     video_encode_preset: str
+    openrouter_api_key: str = field(default="", repr=False)
+    openrouter_model: str = "google/gemini-2.5-flash"
+    chat_timeout_seconds: float = 45
+    chat_max_output_tokens: int = 1200
+    chat_max_tool_rounds: int = 4
+    chat_history_messages: int = 16
+    chat_temperature: float = 0.65
+    chat_llm_share_internal_data: bool = False
+    chat_tts_model: str = "google/gemini-3.8-flash-tts"
+    chat_tts_enabled: bool = True
+    chat_tts_share_internal_data: bool = False
 
     @property
     def migration_path(self) -> Path:
@@ -93,13 +104,24 @@ def get_settings() -> Settings:
         ).strip().lower() in {"1", "true", "yes", "on"},
         device=os.getenv("AI_DEVICE", "auto"),
         detection_confidence=float(os.getenv("DETECTION_CONFIDENCE", "0.20")),
-        rf_detr_inference_fps=float(os.getenv("RF_DETR_INFERENCE_FPS", "0.5")),
+        rf_detr_inference_fps=float(os.getenv("RF_DETR_INFERENCE_FPS", "2")),
         rf_detr_input_size=int(os.getenv("RF_DETR_INPUT_SIZE", "384")),
         person_locator_tiling=_env_flag("PERSON_LOCATOR_TILING", False),
         person_locator_input_size=int(os.getenv("PERSON_LOCATOR_INPUT_SIZE", "960")),
         preload_models=_env_flag("AI_PRELOAD_MODELS", True),
-        ai_cpu_threads=int(os.getenv("AI_CPU_THREADS", str(min(8, os.cpu_count() or 4)))),
+        ai_cpu_threads=max(1, int(os.getenv("AI_CPU_THREADS", str(min(4, max(1, (os.cpu_count() or 4) // 2)))))),
         ai_max_concurrent_inference=int(os.getenv("AI_MAX_CONCURRENT_INFERENCE", "1")),
         video_output_max_width=int(os.getenv("VIDEO_OUTPUT_MAX_WIDTH", "1280")),
         video_encode_preset=os.getenv("VIDEO_ENCODE_PRESET", "ultrafast").strip(),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip() or "google/gemini-2.5-flash",
+        chat_timeout_seconds=max(5, min(float(os.getenv("CHAT_TIMEOUT_SECONDS", "45")), 120)),
+        chat_max_output_tokens=max(128, min(int(os.getenv("CHAT_MAX_OUTPUT_TOKENS", "1200")), 4096)),
+        chat_max_tool_rounds=max(1, min(int(os.getenv("CHAT_MAX_TOOL_ROUNDS", "4")), 6)),
+        chat_history_messages=max(2, min(int(os.getenv("CHAT_HISTORY_MESSAGES", "16")), 40)),
+        chat_temperature=max(0, min(float(os.getenv("CHAT_TEMPERATURE", "0.65")), 1)),
+        chat_llm_share_internal_data=_env_flag("CHAT_LLM_SHARE_INTERNAL_DATA", False),
+        chat_tts_model=os.getenv("CHAT_TTS_MODEL", "google/gemini-3.8-flash-tts").strip() or "google/gemini-3.8-flash-tts",
+        chat_tts_enabled=_env_flag("CHAT_TTS_ENABLED", True),
+        chat_tts_share_internal_data=_env_flag("CHAT_TTS_SHARE_INTERNAL_DATA", False),
     )

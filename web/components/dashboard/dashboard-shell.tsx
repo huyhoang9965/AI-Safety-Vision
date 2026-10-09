@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -28,7 +30,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { defaultAppPath, logoutAccount, restoreAuthSession, userPermissions, userRole, type ApiUser } from '@/lib/auth';
+import { defaultAppPath, logoutAccount, readAuthSession, restoreAuthSession, userPermissions, userRole, type ApiUser } from '@/lib/auth';
 import styles from './dashboard.module.css';
 import AdminChatbot from './admin-chatbot';
 
@@ -99,6 +101,8 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [overdueAlerts, setOverdueAlerts] = useState<{ count: number; items: { id: string; title: string; camera_code: string }[] } | null>(null);
+  const [notificationError, setNotificationError] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const permissions = useMemo(() => user ? userPermissions(user) : new Set<string>(), [user]);
@@ -138,7 +142,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
     const checkHealth = async () => {
       try {
         const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
-        const response = await fetch(base + '/api/health', { signal: controller.signal });
+        const response = await authenticatedFetch(base + '/api/health', { signal: controller.signal });
         setBackendOnline(response.ok);
       } catch {
         if (!controller.signal.aborted) setBackendOnline(false);
@@ -157,6 +161,52 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
     setNotificationsOpen(false);
     setProfileOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!authReady || !permissions.has('event.view')) { setOverdueAlerts(null); setNotificationError(false); return; }
+    const controller = new AbortController();
+    let pending = false;
+    let refreshAgain = false;
+    const refreshNotifications = async (event?: Event) => {
+      if (pending) {
+        if (event?.type === 'safety-alerts-updated') refreshAgain = true;
+        return;
+      }
+      if (document.visibilityState !== 'visible') return;
+      const stored = readAuthSession();
+      if (!stored) { setOverdueAlerts(null); setNotificationError(true); return; }
+      pending = true;
+      try {
+        const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+        const response = await authenticatedFetch(base + '/api/alerts?period=all&overdue=true&limit=5', {
+          headers: { Authorization: 'Bearer ' + stored.session.access_token }, signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('Không thể tải thông báo');
+        const payload = await response.json();
+        if (!controller.signal.aborted && !refreshAgain) {
+          setOverdueAlerts({ count: payload.summary.overdue || 0, items: payload.items });
+          setNotificationError(false);
+        }
+      } catch {
+        if (!controller.signal.aborted && !refreshAgain) setNotificationError(true);
+      } finally {
+        pending = false;
+        if (refreshAgain && !controller.signal.aborted) {
+          refreshAgain = false;
+          void refreshNotifications();
+        }
+      }
+    };
+    void refreshNotifications();
+    const timer = window.setInterval(() => void refreshNotifications(), 30000);
+    window.addEventListener('safety-alerts-updated', refreshNotifications);
+    document.addEventListener('visibilitychange', refreshNotifications);
+    return () => {
+      controller.abort(); window.clearInterval(timer);
+      window.removeEventListener('safety-alerts-updated', refreshNotifications);
+      document.removeEventListener('visibilitychange', refreshNotifications);
+    };
+  }, [authReady, permissions, notificationsOpen]);
 
   const handleLogout = async () => {
     setUser(null);
@@ -285,19 +335,24 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                 aria-expanded={notificationsOpen}
               >
                 <Bell size={18} />
-                <i />
+                {!!overdueAlerts?.count && <span className={styles.notificationBadge} aria-label={overdueAlerts.count + ' cảnh báo quá hạn'}>{overdueAlerts.count > 99 ? '99+' : overdueAlerts.count}</span>}
               </button>
               {notificationsOpen && (
                 <div className={styles.popover}>
                   <div className={styles.popoverHead}>
                     <strong>Thông báo</strong>
-                    <span>0 chưa đọc</span>
+                    <span>{overdueAlerts?.count || 0} quá hạn</span>
                   </div>
-                  <div className={styles.emptyPopover}>
+                  {notificationError && <p className={styles.notificationError}>Chưa tải được thông báo. Hệ thống sẽ tự thử lại.</p>}
+                  {overdueAlerts?.count ? <div className={styles.notificationList}>
+                    <p role="status">Có {overdueAlerts.count} cảnh báo chưa xác nhận sau 24 giờ.</p>
+                    {overdueAlerts.items.map(item => <Link key={item.id} href="/dashboard/alerts?overdue=true" onClick={() => setNotificationsOpen(false)}><Siren size={17} /><span><strong>{item.title}</strong><small>{item.camera_code} · Quá hạn xử lý</small></span></Link>)}
+                    <Link className={styles.allNotifications} href="/dashboard/alerts?overdue=true" onClick={() => setNotificationsOpen(false)}>Xem tất cả cảnh báo quá hạn</Link>
+                  </div> : !notificationError && <div className={styles.emptyPopover}>
                     <Bell size={22} />
-                    <strong>Chưa có thông báo mới</strong>
-                    <small>Cảnh báo hệ thống sẽ xuất hiện tại đây.</small>
-                  </div>
+                    <strong>{permissions.has('event.view') && !overdueAlerts ? 'Đang tải thông báo...' : 'Không có cảnh báo quá hạn'}</strong>
+                    <small>{permissions.has('event.view') ? 'Cảnh báo chưa xử lý quá 24 giờ sẽ xuất hiện tại đây.' : 'Tài khoản chưa có quyền xem cảnh báo.'}</small>
+                  </div>}
                 </div>
               )}
             </div>

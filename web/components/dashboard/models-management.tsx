@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity, AlertTriangle, BarChart3, Bot, Box, BrainCircuit, Camera,
   Check, ChevronRight, CircleDot, Clock3, Cpu, Database, Gauge, HardDrive,
@@ -9,6 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { readAuthSession } from '@/lib/auth';
 import styles from './models-management.module.css';
+import AssistantMetrics from './assistant-metrics';
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_URL||'http://localhost:8000').replace(/\/$/,'');
 type Stats={total_runs:number;completed_runs:number;failed_runs:number;average_processing_seconds:number|null;last_run_at:string|null;detections:number;violations:number;average_confidence:number|null};
@@ -28,11 +31,11 @@ function Metric({icon,label,value,detail,tone='green'}:{icon:ReactNode;label:str
 
 export default function ModelsManagement(){
  const[data,setData]=useState<Data|null>(null),[selected,setSelected]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[toast,setToast]=useState(''),[query,setQuery]=useState(''),[deployOpen,setDeployOpen]=useState(false),[busy,setBusy]=useState(false);
- const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await fetch(API_BASE+'/api/models/management',{headers:headers()});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(errorMessage(p));const result=p as Data;setData(result);setSelected(current=>current||result.models[0]?.code||'');}catch(e){setError(e instanceof Error?e.message:'Không thể tải mô hình.');}finally{setLoading(false);}},[]);
+ const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await authenticatedFetch(API_BASE+'/api/models/management',{headers:headers()});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(errorMessage(p));const result=p as Data;setData(result);setSelected(current=>current||result.models[0]?.code||'');}catch(e){setError(e instanceof Error?e.message:'Không thể tải mô hình.');}finally{setLoading(false);}},[]);
  useEffect(()=>{void load();},[load]);useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),3000);return()=>clearTimeout(t);},[toast]);
  const model=data?.models.find(x=>x.code===selected)||data?.models[0]||null;
  const deployments=useMemo(()=>data?.deployments.filter(x=>!model||x.model_code===model.code).filter(x=>!query||[x.camera_code,x.camera_name,x.site_name,x.zone_name||''].some(v=>v.toLocaleLowerCase('vi').includes(query.toLocaleLowerCase('vi'))))||[],[data,model,query]);
- async function action(path:string,body:unknown,success:string){setBusy(true);setError('');try{const r=await fetch(API_BASE+path,{method:'POST',headers:headers(true),body:JSON.stringify(body)});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(errorMessage(p));setToast(success);await load();return true;}catch(e){setError(e instanceof Error?e.message:'Không thể cập nhật mô hình.');return false;}finally{setBusy(false);}}
+ async function action(path:string,body:unknown,success:string){setBusy(true);setError('');try{const r=await authenticatedFetch(API_BASE+path,{method:'POST',headers:headers(true),body:JSON.stringify(body)});const p=await r.json().catch(()=>null);if(!r.ok)throw new Error(errorMessage(p));setToast(success);await load();return true;}catch(e){setError(e instanceof Error?e.message:'Không thể cập nhật mô hình.');return false;}finally{setBusy(false);}}
  if(loading)return <div className={styles.loading}><LoaderCircle/><strong>Đang đồng bộ Model Registry</strong><span>Đọc checkpoint, deployment và lịch sử inference...</span></div>;
  if(!data||!model)return <div className={styles.loading}><AlertTriangle/><strong>Không thể tải mô hình AI</strong><span>{error}</span><button onClick={()=>void load()}><RefreshCw size={15}/>Thử lại</button></div>;
  const successRate=model.stats.total_runs?Math.round(model.stats.completed_runs/model.stats.total_runs*100):0;
@@ -45,6 +48,7 @@ export default function ModelsManagement(){
    <Metric icon={<Zap/>} label="Inference 24 giờ" value={data.summary.runs_24h} detail={data.summary.failures_24h+' lần thất bại'} tone="orange"/>
    <Metric icon={<Clock3/>} label="Độ trễ trung bình" value={data.summary.average_processing_seconds===null?'—':data.summary.average_processing_seconds.toFixed(2)+'s'} detail="Các lần chạy hoàn tất" />
   </section>
+  <AssistantMetrics />
   <section className={styles.registry}><header><div><span><Layers3 size={18}/></span><div><strong>Model Registry</strong><small>Checkpoint đang kết nối với backend</small></div></div><em>{data.summary.connected_models}/{data.summary.total_models} READY</em></header><div className={styles.modelCards}>{data.models.map(item=><button key={item.code} className={item.code===model.code?styles.modelCard+' '+styles.modelSelected:styles.modelCard} onClick={()=>setSelected(item.code)}><div className={styles.modelTop}><span data-type={item.type}>{item.type==='detection'?<Box/>:<Activity/>}</span><i data-ready={item.connected}>{item.connected?'READY':'OFFLINE'}</i></div><strong>{item.name}</strong><p>{item.type==='detection'?'Phát hiện đối tượng & PPE':'Phân loại hành vi trong video'}</p><dl><div><dt>Phiên bản</dt><dd>{item.version}</dd></div><div><dt>Triển khai</dt><dd>{item.active_deployments}</dd></div><div><dt>Lượt chạy</dt><dd>{item.stats.total_runs}</dd></div></dl><footer><span>{item.loaded?<><CircleDot/>Đã nạp RAM</>:<><Database/>Lazy loading</>}</span><ChevronRight size={15}/></footer></button>)}</div></section>
   <div className={styles.detailGrid}><section className={styles.detail}>
    <header className={styles.detailHead}><div className={styles.modelIdentity}><span data-type={model.type}>{model.type==='detection'?<Box/>:<Activity/>}</span><div><small>{model.code}</small><h2>{model.name}</h2><p>{model.framework}</p></div></div><div className={styles.ready} data-ready={model.connected}><i/><span><strong>{model.connected?'Sẵn sàng':'Chưa kết nối'}</strong><small>{model.loaded?'Đã nạp vào bộ nhớ':'Tải khi inference đầu tiên'}</small></span></div></header>

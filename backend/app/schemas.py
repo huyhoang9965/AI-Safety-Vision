@@ -54,3 +54,5 @@ class InferenceResponse(BaseModel):
     persisted: bool
     event_ids: list[str] = Field(default_factory=list)
     violations_saved: int = 0
+    new_event_ids: list[str] = Field(default_factory=list)
+    reused: bool = False

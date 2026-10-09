@@ -43,6 +43,21 @@ class ReportTrendPoint(BaseModel):
     incidents: int
 
 
+class ReportResponseMetrics(BaseModel):
+    pending_events: int
+    acknowledged_events: int
+    overdue_events: int
+    acknowledge_samples: int
+    resolution_samples: int
+    acknowledged_within_24h: int
+    acknowledge_p50_seconds: float | None
+    acknowledge_p95_seconds: float | None
+    acknowledge_p99_seconds: float | None
+    resolution_p50_seconds: float | None
+    resolution_p95_seconds: float | None
+    resolution_p99_seconds: float | None
+
+
 class ReportEventTypeMetric(BaseModel):
     code: str
     name: str
@@ -116,6 +131,7 @@ class ReportFilters(BaseModel):
 class ReportOverviewResponse(BaseModel):
     period: ReportPeriod
     summary: ReportSummary
+    response_metrics: ReportResponseMetrics | None = None
     trend: list[ReportTrendPoint]
     event_types: list[ReportEventTypeMetric]
     severities: list[ReportNamedMetric]

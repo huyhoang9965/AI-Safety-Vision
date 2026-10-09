@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import logging
 from hashlib import sha256
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import BoundedSemaphore, Event, Lock
 from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
+from contextlib import contextmanager
+import json
 
 from app.config import get_settings
 from app.database import database
 from app.models.base import InferenceOutput
 from app.models.registry import registry
 from app.services.video_catalog import ResolvedVideo
+from app.services.behavior_verification import PIPELINE_VERSION, deduplicate_evidence, verify_behavior
+from app.models.detection_styles import detection_color
+from app.models.rfdetr import PPE_PIPELINE_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +40,10 @@ VIOLATION_EVENT_CODES = {
 VIOLATION_TITLES = {
     "SUSPECTED_NO_HELMET": "Nghi ngờ không đội mũ bảo hộ",
     "SUSPECTED_NO_VEST": "Nghi ngờ không mặc áo bảo hộ",
-    "SAFE_WALKWAY_VIOLATION": "Đi vào khu vực nguy hiểm",
+    "SAFE_WALKWAY_VIOLATION": "Đi ngoài lối đi an toàn",
     "UNAUTHORIZED_INTERVENTION": "Can thiệp trái phép",
     "OPENED_PANEL_COVER": "Nắp tủ điện đang mở",
-    "FORKLIFT_OVERLOAD": "Xe nâng chở quá tải",
+    "FORKLIFT_OVERLOAD": "Nghi ngờ xe nâng chở quá tải",
     "FALL_DETECTED": "Phát hiện té ngã",
     "FIRE_SMOKE": "Phát hiện lửa hoặc khói",
     "RESTRICTED_AREA": "Xâm nhập khu vực cấm",
@@ -66,14 +71,64 @@ class InferenceServiceResult:
     metrics: dict[str, Any]
     persisted: bool
     event_ids: tuple[str, ...] = ()
+    new_event_ids: tuple[str, ...] = ()
+    reused: bool = False
 
 
 _cache_lock = Lock()
 _result_cache: dict[tuple[str, str, str], InferenceServiceResult] = {}
+_cached_at: dict[tuple[str, str, str], float] = {}
 _inflight: dict[tuple[str, str, str], Event] = {}
 _inference_errors: dict[tuple[str, str, str], str] = {}
 _model_locks: dict[str, Lock] = {}
 _inference_slots = BoundedSemaphore(max(1, get_settings().ai_max_concurrent_inference))
+
+
+def _cache_signature(video, spec):
+    settings = get_settings()
+    def stamp(path):
+        if path is None or not Path(path).is_file():return None
+        stat = Path(path).stat()
+        return [stat.st_size,stat.st_mtime_ns]
+    payload=[PIPELINE_VERSION,stamp(video.filepath),stamp(spec.weight_path),
+        stamp(Path(__file__)),
+        stamp(settings.backend_root / 'app/services/behavior_verification.py'),
+        stamp(settings.backend_root / 'app/services/panel_localization.py'),
+        stamp(settings.backend_root / 'app/models/rfdetr.py'),
+        stamp(settings.backend_root / 'app/models/person_locator.py'),
+        stamp(settings.backend_root / 'app/models/visible_person_tracking.py'),
+        stamp(settings.backend_root / 'app/models/detection_common.py'),
+        stamp(settings.project_root / 'web/lib/detection-styles.json'),
+        stamp(settings.checkpoint_storage_dir / 'yolov8s.pt'),
+        stamp(settings.project_root / 'web/lib/demo-camera-presets.json'),
+        settings.detection_confidence,settings.rf_detr_inference_fps,
+        settings.rf_detr_input_size,settings.person_locator_input_size,settings.person_locator_tiling]
+    return sha256(json.dumps(payload).encode()).hexdigest()
+
+
+@contextmanager
+def _durable_cache_lock(cache_key, video, spec, camera_code, user):
+    # Hold a database session advisory lock across lookup/inference/save so two
+    # server workers cannot create duplicate histories and detection batches.
+    if not database.is_database_available():
+        yield None
+        return
+    camera = database.find_camera_by_code(camera_code, _organization_ids(user))
+    with database.connection() as conn:
+        lock_key = json.dumps(cache_key)
+        conn.execute("SELECT pg_advisory_lock(hashtextextended(%s, 0))",(lock_key,))
+        try:
+            row = database.find_cached_inference(conn,video.filepath,spec.name,camera['id'] if camera else None,_cache_signature(video,spec))
+            cached=None
+            if row:
+                metrics=row['metrics']
+                artifacts=[row['output_video'], *[e.get('image') for e in metrics.get('evidence_events',[])]]
+                if all(not a or not a.startswith('/results/') or (get_settings().output_dir/Path(a).name).is_file() for a in artifacts):
+                    cached=InferenceServiceResult(row['id'],spec.name,metrics['result_type'],metrics['result_prediction'],
+                        float(metrics['result_confidence']),row['output_video'],float(row['processing_time']),metrics,True,tuple(row['event_ids']),(),True)
+            yield cached
+        finally:
+            conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))",(lock_key,))
 
 
 def _organization_ids(user: dict[str, Any] | None) -> list[UUID | str]:
@@ -116,7 +171,7 @@ def _start_history(
         return None, False
 
 
-def _save_video_snapshot(video_path: Path, output_dir: Path, inference_id: int) -> str | None:
+def _save_video_snapshot(video_path: Path, output_dir: Path, inference_id: int, frame_index: int | None = None, bbox: list | None = None, class_name: str = '') -> str | None:
     """Save a representative JPEG for classification violations."""
     try:
         import cv2
@@ -126,11 +181,20 @@ def _save_video_snapshot(video_path: Path, output_dir: Path, inference_id: int) 
             return None
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         if frame_count > 1:
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_count // 2)
+            target = frame_count // 2 if frame_index is None else max(0,min(frame_index,frame_count-1))
+            capture.set(cv2.CAP_PROP_POS_FRAMES, target)
         ok, frame = capture.read()
         capture.release()
         if not ok:
             return None
+        if bbox and len(bbox) == 4:
+            h,w=frame.shape[:2]
+            x1,y1,x2,y2=map(int,bbox)
+            pad_x=max(48,round((x2-x1)*.3));pad_y=max(36,round((y2-y1)*.15))
+            crop_x,crop_y=max(0,x1-pad_x),max(0,y1-pad_y)
+            frame=frame[crop_y:min(h,y2+pad_y),crop_x:min(w,x2+pad_x)].copy()
+            if not frame.size:return None
+            cv2.rectangle(frame,(x1-crop_x,y1-crop_y),(x2-crop_x,y2-crop_y),detection_color(class_name),2,cv2.LINE_AA)
         output_dir.mkdir(parents=True, exist_ok=True)
         evidence_path = output_dir / (
             f"inference_{inference_id}_evidence_{uuid4().hex[:8]}.jpg"
@@ -185,18 +249,20 @@ def _detected_object(
 
 
 def _classification_evidence(output: InferenceOutput) -> list[dict[str, Any]]:
-    class_scores = output.metrics.get("class_scores", {})
-    # Use the same top unsafe class that Demo presents as its alert.
     label = str(output.prediction).strip()
     if label.casefold() not in VIOLATION_EVENT_CODES:
         return []
-    return [
-        {
-            "class_name": label,
-            "confidence": class_scores.get(label, output.confidence),
-            "basis": "video_classification",
-        }
-    ]
+    minimum = .75 if label == "Carrying Overload with Forklift" else .90
+    if output.confidence < minimum:
+        return []
+    # A clip score alone cannot establish a walkway intrusion or object box.
+    events = output.metrics.get("evidence_events", [])
+    return deduplicate_evidence([event for event in events if isinstance(event, dict)
+        and event.get("verified") is True and (event.get("class_name") == label or (
+            label == 'Unauthorized Intervention' and event.get('class_name') == 'Opened Panel Cover'
+            and event.get('basis') == 'visible_panel_aperture_and_intervention_context'
+            and output.metrics.get('panel_verification') == 'localized_panel'
+            and isinstance(event.get('bbox'),list) and len(event['bbox']) == 4))])
 
 
 def _build_violation_candidates(
@@ -212,14 +278,22 @@ def _build_violation_candidates(
         evidence_events = []
     if output.type == "classification":
         evidence_events = _classification_evidence(output)
-        if evidence_events:
-            snapshot = _save_video_snapshot(video.filepath, get_settings().output_dir, inference_id)
+        for evidence in evidence_events:
+            evidence_frame = evidence.get("frame_index")
+            snapshot = _save_video_snapshot(video.filepath, get_settings().output_dir, inference_id, evidence_frame)
             if not snapshot:
-                frame_index = max(0, int(video.duration * video.fps / 2))
+                frame_index = evidence_frame if evidence_frame is not None else max(0, int((video.duration or 0) * (video.fps or 25) / 2))
                 snapshot = f"/api/videos/{video.id}/thumbnail?frame_index={frame_index}"
-            for evidence in evidence_events:
-                evidence["image"] = snapshot
+            evidence["image"] = snapshot
+            if evidence.get("bbox"):
+                evidence["full_frame_image"] = snapshot
+                crop = _save_video_snapshot(video.filepath,get_settings().output_dir,inference_id,evidence_frame,evidence["bbox"],evidence.get('class_name', ''))
+                if crop:
+                    evidence["image"] = crop
         output.metrics["evidence_events"] = evidence_events
+
+    evidence_events = deduplicate_evidence(evidence_events)
+    output.metrics["evidence_events"] = evidence_events
 
     candidates: list[dict[str, Any]] = []
     for index, raw_evidence in enumerate(evidence_events):
@@ -256,7 +330,7 @@ def _build_violation_candidates(
                 }
             )
         dedupe_suffix = str(track_id) if track_id is not None else str(index)
-        source_key = f"{camera_code or ''}:{video.filename}:{model_name}:{event_code}:{dedupe_suffix}"
+        source_key = f"{(camera_code or '').upper()}:{video.filename}:{model_name}:{event_code}:{dedupe_suffix}"
         candidates.append(
             {
                 "event_code": event_code,
@@ -277,6 +351,8 @@ def _build_violation_candidates(
                     "source_video_id": video.id,
                     "label": label,
                     "evidence": raw_evidence,
+                    "candidate_index": index,
+                    "pipeline_version": PIPELINE_VERSION,
                 },
                 "deduplication_key": "demo-video:" + sha256(source_key.encode("utf-8")).hexdigest(),
                 "detected_object": _detected_object(
@@ -311,6 +387,17 @@ def _detections_with_evidence(output: InferenceOutput) -> list[dict[str, Any]]:
     return enriched
 
 
+def detection_overlay_frames(output: InferenceOutput, duration: float | None) -> list[dict[str, Any]]:
+    fps = float(output.metrics.get('fps') or 25)
+    interval = 1 / float(output.metrics.get('inference_fps') or 1)
+    return [{
+        'class_name': row['class_name'], 'track_id': row.get('track_id'),
+        'timestamp_seconds': round(float(row['frame_index']) / fps, 3),
+        'end_seconds': round(min(float(duration or 0), float(row['frame_index']) / fps + interval), 3),
+        'bbox': [row['x1'], row['y1'], row['x2'], row['y2']],
+    } for row in output.detections if row.get('is_violation')]
+
+
 def _run_inference_uncached(
     video: ResolvedVideo,
     model_name: str,
@@ -329,6 +416,10 @@ def _run_inference_uncached(
         with _inference_slots:
             with model_lock:
                 output = adapter.infer(video.filepath, settings.output_dir)
+            if output.type == "classification":
+                verify_behavior(output, video.filepath, camera_code)
+            else:
+                output.metrics["overlay_frames"] = detection_overlay_frames(output, video.duration)
         elapsed = perf_counter() - started_at
         output_video = (
             f"/results/{output.output_path.name}"
@@ -336,16 +427,15 @@ def _run_inference_uncached(
             else f"/api/videos/{video.id}/stream"
         )
 
+        candidates = _build_violation_candidates(output, video, spec.name, output_video,
+            context.inference_id if context else 0, context.camera_code if context else camera_code)
+        output.metrics["cache_signature"] = _cache_signature(video, spec)
+        output.metrics["result_prediction"] = output.prediction
+        output.metrics["result_confidence"] = output.confidence
+        output.metrics["result_type"] = output.type
         event_ids: tuple[str, ...] = ()
+        new_event_ids: list[str] = []
         if context is not None:
-            candidates = (
-                _build_violation_candidates(
-                    output, video, spec.name, output_video, context.inference_id,
-                    context.camera_code,
-                )
-                if context.camera_id is not None
-                else []
-            )
             try:
                 database.complete_inference(
                     inference_id=context.inference_id,
@@ -363,7 +453,7 @@ def _run_inference_uncached(
                     try:
                         event_ids = tuple(
                             database.create_safety_events(
-                                context.inference_id, context.camera_id, candidates
+                                context.inference_id, context.camera_id, candidates, created_ids=new_event_ids
                             )
                         )
                         if len(event_ids) != len(candidates):
@@ -372,6 +462,15 @@ def _run_inference_uncached(
                     except Exception:
                         persisted = False
                         logger.exception("Could not persist safety events")
+                if persisted:
+                    event_code = VIOLATION_EVENT_CODES.get(output.prediction.casefold())
+                    if context.camera_id is not None and event_code in {"SAFE_WALKWAY_VIOLATION", "FORKLIFT_OVERLOAD"} and output.metrics.get("verification") in {"confirmed", "no_visible_violation"}:
+                        database.retire_obsolete_demo_events(context.camera_id, video.filename, event_code, event_ids)
+                    if context.camera_id is not None and spec.name == 'RF-DETR' and output.metrics.get('pipeline_version') == PPE_PIPELINE_VERSION:
+                        for code in ['SUSPECTED_NO_HELMET','SUSPECTED_NO_VEST']:
+                            database.retire_obsolete_demo_events(context.camera_id, video.filename, code, event_ids, model_name=spec.name)
+                    database.mark_events_persisted(context.inference_id)
+                    output.metrics["events_persisted"] = True
 
         return InferenceServiceResult(
             inference_id=context.inference_id if context else None,
@@ -384,6 +483,7 @@ def _run_inference_uncached(
             metrics=output.metrics,
             persisted=persisted,
             event_ids=event_ids,
+            new_event_ids=tuple(new_event_ids),
         )
     except Exception as exc:
         elapsed = perf_counter() - started_at
@@ -405,12 +505,16 @@ def run_inference(
     spec = registry.get_spec(model_name)
     organization_scope = ",".join(sorted(str(value) for value in _organization_ids(user)))
     camera_scope = f"{organization_scope}:{(camera_code or '').upper()}"
-    cache_key = (str(video.filepath.resolve()).lower(), spec.name, camera_scope)
+    cache_key = (str(video.filepath.resolve()).lower(), spec.name, camera_scope + ':' + _cache_signature(video,spec))
 
     with _cache_lock:
         cached = _result_cache.get(cache_key)
+        if cached is not None and not cached.persisted and perf_counter()-_cached_at.get(cache_key,0)>60:
+            _result_cache.pop(cache_key,None)
+            _cached_at.pop(cache_key,None)
+            cached=None
         if cached is not None:
-            return cached
+            return replace(cached,new_event_ids=(),reused=True)
         wait_event = _inflight.get(cache_key)
         is_leader = wait_event is None
         if is_leader:
@@ -423,15 +527,21 @@ def run_inference(
         with _cache_lock:
             cached = _result_cache.get(cache_key)
             if cached is not None:
-                return cached
+                return replace(cached,new_event_ids=(),reused=True)
             message = _inference_errors.get(cache_key, "Inference failed")
         raise RuntimeError(message)
 
     try:
-        result = _run_inference_uncached(video, spec.name, camera_code, user)
-        if result.persisted:
-            with _cache_lock:
-                _result_cache[cache_key] = result
+        with _durable_cache_lock(cache_key,video,spec,camera_code,user) as durable:
+            result = durable or _run_inference_uncached(video, spec.name, camera_code, user)
+        # Even without persistence, share the same computed result with waiters.
+        with _cache_lock:
+            if len(_result_cache) >= 256:
+                oldest=next(iter(_result_cache))
+                _result_cache.pop(oldest)
+                _cached_at.pop(oldest,None)
+            _result_cache[cache_key] = result
+            _cached_at[cache_key] = perf_counter()
         return result
     except Exception as exc:
         with _cache_lock:

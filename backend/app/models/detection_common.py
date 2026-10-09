@@ -13,6 +13,7 @@ import cv2
 
 from app.config import get_settings
 from app.models.base import InferenceOutput
+from app.models.detection_styles import detection_color
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ def render_detection_video(
         capture.release()
         raise RuntimeError("PyAV is required to create an H.264 browser-compatible output video") from exc
 
-    container = av.open(str(output_path), mode="w")
+    container = av.open(str(output_path), mode="w", options={"movflags": "+faststart"})
     settings = get_settings()
     output_width, output_height = width, height
     if 0 < settings.video_output_max_width < width:
@@ -81,6 +82,7 @@ def render_detection_video(
     stream.width = output_width
     stream.height = output_height
     stream.pix_fmt = "yuv420p"
+    stream.codec_context.thread_count = 2
     stream.options = {"crf": "24", "preset": settings.video_encode_preset or "ultrafast"}
 
     peak_counts: Counter[str] = Counter()
@@ -113,7 +115,7 @@ def render_detection_video(
                 y1 = max(0, min(height - 1, int(detection.y1)))
                 x2 = max(0, min(width - 1, int(detection.x2)))
                 y2 = max(0, min(height - 1, int(detection.y2)))
-                color = (56, 65, 230) if detection.is_violation else COLORS[index % len(COLORS)]
+                color = detection_color(detection.class_name) if detection.is_violation else COLORS[index % len(COLORS)]
                 label = detection.class_name if detection.is_violation else f"{detection.class_name} {detection.confidence:.2f}"
                 if detection.track_id is not None:
                     label += f" #{detection.track_id}"
@@ -181,7 +183,7 @@ def render_detection_video(
                                 crop,
                                 (local_x1, local_y1),
                                 (local_x2, local_y2),
-                                (56, 65, 230),
+                                color,
                                 1 if min(box_width, box_height) < 60 else 2,
                                 cv2.LINE_AA,
                             )
@@ -194,7 +196,7 @@ def render_detection_video(
                                 (4, 18),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 evidence_scale,
-                                (56, 65, 230),
+                                color,
                                 1,
                                 cv2.LINE_AA,
                             )

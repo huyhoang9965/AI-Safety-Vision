@@ -1527,10 +1527,10 @@ ON CONFLICT DO NOTHING;
 INSERT INTO event_types (code, name, description, default_severity, icon, color) VALUES
     ('SUSPECTED_NO_HELMET', 'Nghi ngo khong doi mu bao ho', 'RF-DETR chua quan sat thay mu tai vung dau; can nguoi dung xac minh', 'critical', 'hard-hat', '#DC2626'),
     ('SUSPECTED_NO_VEST', 'Nghi ngo khong mac ao bao ho', 'RF-DETR chua quan sat thay ao tai vung than; can nguoi dung xac minh', 'high', 'vest', '#EA580C'),
-    ('SAFE_WALKWAY_VIOLATION', 'Di vao khu vuc nguy hiem', 'VideoMAE: Safe Walkway Violation', 'medium', 'person-walking-arrow-right', '#EAB308'),
+    ('SAFE_WALKWAY_VIOLATION', 'Di ngoai loi di an toan', 'VideoMAE va xac minh vi tri chan ngoai loi di da hieu chinh', 'medium', 'person-walking-arrow-right', '#EAB308'),
     ('UNAUTHORIZED_INTERVENTION', 'Can thiep trai phep', 'VideoMAE: Unauthorized Intervention', 'critical', 'hand', '#DC2626'),
     ('OPENED_PANEL_COVER', 'Nap tu dien dang mo', 'VideoMAE: Opened Panel Cover', 'high', 'bolt', '#EA580C'),
-    ('FORKLIFT_OVERLOAD', 'Xe nang cho qua tai', 'VideoMAE: Carrying Overload with Forklift', 'high', 'truck-ramp-box', '#EA580C'),
+    ('FORKLIFT_OVERLOAD', 'Nghi ngo xe nang cho qua tai', 'Xe nang cho hang cao; can xac minh tai trong thuc te', 'high', 'truck-ramp-box', '#EA580C'),
     ('FALL_DETECTED', 'Phat hien te nga', 'Phat hien nguoi bi te nga', 'critical', 'person-falling', '#DC2626'),
     ('FIRE_SMOKE', 'Lua hoac khoi', 'Phat hien lua hoac khoi bat thuong', 'critical', 'fire', '#DC2626'),
     ('RESTRICTED_AREA', 'Xam nhap khu vuc cam', 'Nguoi xam nhap khu vuc han che', 'high', 'triangle-exclamation', '#EA580C'),

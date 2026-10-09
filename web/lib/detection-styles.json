@@ -1,0 +1,8 @@
+{
+  "Suspected no helmet": { "label": "Nghi không đội mũ", "color": "#ef4444", "ink": "#ffffff" },
+  "Suspected no vest": { "label": "Nghi thiếu áo bảo hộ", "color": "#f59e0b", "ink": "#172033" },
+  "Opened Panel Cover": { "label": "Tủ điện đang mở", "color": "#a855f7", "ink": "#ffffff" },
+  "Safe Walkway Violation": { "label": "Ngoài lối đi an toàn", "color": "#2563eb", "ink": "#ffffff" },
+  "Carrying Overload with Forklift": { "label": "Nghi xe nâng quá tải", "color": "#f97316", "ink": "#172033" },
+  "Unauthorized Intervention": { "label": "Can thiệp trái phép", "color": "#e11d48", "ink": "#ffffff" }
+}

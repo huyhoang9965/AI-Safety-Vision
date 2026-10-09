@@ -30,6 +30,7 @@ export type AuthSession = {
   refresh_token: string;
   token_type: string;
   expires_in: number;
+  access_expires_at?: number;
   user: ApiUser;
 };
 
@@ -56,17 +57,18 @@ export class AuthApiError extends Error {
   }
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiRequest<T>(path: string, init?: RequestInit, request = fetch): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(API_BASE + path, {
+    response = await request(API_BASE + path, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
         ...init?.headers,
       },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthApiError) throw error;
     throw new AuthApiError('Không thể kết nối backend. Hãy kiểm tra FastAPI đang chạy ở cổng 8000.', 0);
   }
 
@@ -117,7 +119,7 @@ export async function loginAccount(email: string, password: string): Promise<Aut
 export async function getCurrentUser(accessToken: string): Promise<ApiUser> {
   return apiRequest<ApiUser>('/api/auth/me', {
     headers: { Authorization: 'Bearer ' + accessToken },
-  });
+  }, authenticatedFetch);
 }
 
 export async function refreshAccount(refreshToken: string): Promise<AuthSession> {
@@ -128,9 +130,12 @@ export async function refreshAccount(refreshToken: string): Promise<AuthSession>
 }
 
 export function saveAuthSession(session: AuthSession, remember: boolean): void {
-  clearAuthSession();
   const storage = remember ? window.localStorage : window.sessionStorage;
-  storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  storage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+    ...session,
+    access_expires_at: tokenExpiry(session) ?? Date.now() + session.expires_in * 1000,
+  }));
+  (remember ? window.sessionStorage : window.localStorage).removeItem(AUTH_STORAGE_KEY);
 }
 
 export function readAuthSession(): { session: AuthSession; remember: boolean } | null {
@@ -157,42 +162,115 @@ export function clearAuthSession(): void {
   window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
+function tokenExpiry(session: AuthSession): number | null {
+  // Only a scheduling hint; the backend still verifies the signature and expiry.
+  try {
+    const payload = JSON.parse(atob(session.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (typeof payload.exp === 'number') return payload.exp * 1000;
+  } catch { /* Legacy stored sessions can use the expiry saved at login. */ }
+  return typeof session.access_expires_at === 'number' ? session.access_expires_at : null;
+}
+
+let refreshInFlight: Promise<AuthSession | null> | null = null;
+
+async function renewAuthSession(expected: AuthSession): Promise<AuthSession | null> {
+  if (refreshInFlight) return refreshInFlight;
+  const renew = async () => {
+    const stored = readAuthSession();
+    if (!stored) return null;
+    // Another request or tab may already have rotated both tokens.
+    if (stored.session.access_token !== expected.access_token
+        || stored.session.refresh_token !== expected.refresh_token) return stored.session;
+    try {
+      const refreshed = await refreshAccount(stored.session.refresh_token);
+      const current = readAuthSession();
+      if (!current) return null; // A pending refresh must never undo logout.
+      if (current.session.refresh_token !== stored.session.refresh_token) return current.session;
+      saveAuthSession(refreshed, current.remember);
+      return refreshed;
+    } catch (error) {
+      const current = readAuthSession();
+      if (current && current.session.refresh_token !== stored.session.refresh_token) return current.session;
+      if (error instanceof AuthApiError && error.status === 401 && current) clearAuthSession();
+      throw error;
+    }
+  };
+  // Refresh tokens are rotated by the backend: serialize tabs as well as requests.
+  const pending = typeof navigator !== 'undefined' && navigator.locks
+    ? navigator.locks.request('ai-safety-auth-refresh', renew).then(session => session)
+    : renew();
+  refreshInFlight = pending;
+  try { return await pending; }
+  finally { if (refreshInFlight === pending) refreshInFlight = null; }
+}
+
+export async function maintainAuthSession(): Promise<void> {
+  const stored = readAuthSession();
+  if (!stored) return;
+  const expiry = tokenExpiry(stored.session);
+  if (expiry !== null && expiry <= Date.now() + 60000) await renewAuthSession(stored.session);
+}
+
+export async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = new URL(input instanceof Request ? input.url : String(input), API_BASE);
+  const api = new URL(API_BASE);
+  if (url.origin !== api.origin || !url.pathname.startsWith('/api/')
+      || ['/api/health', '/api/auth/login', '/api/auth/register', '/api/auth/refresh', '/api/auth/logout'].includes(url.pathname)) {
+    return fetch(input, init);
+  }
+  const stored = readAuthSession();
+  if (!stored) return fetch(input, init);
+  try { await maintainAuthSession(); }
+  catch (error) {
+    // A temporary outage should not erase the session or log out the user.
+    const expiry = tokenExpiry(stored.session);
+    if (error instanceof AuthApiError && error.status === 401) throw error;
+    if (expiry !== null && expiry <= Date.now()) throw error;
+  }
+  const current = readAuthSession();
+  if (!current) throw new AuthApiError('Vui lòng đăng nhập để tiếp tục.', 401);
+  if (current.session.user.id !== stored.session.user.id) throw new AuthApiError('Tài khoản đăng nhập đã thay đổi.', 401);
+  const request = new Request(input, init);
+  const retryRequest = request.clone();
+  const send = (source: Request, accessToken: string) => {
+    source.signal.throwIfAborted();
+    const headers = new Headers(source.headers);
+    headers.set('Authorization', 'Bearer ' + accessToken);
+    return fetch(new Request(source, { headers }));
+  };
+  const response = await send(request, current.session.access_token);
+  if (response.status !== 401) return response;
+  retryRequest.signal.throwIfAborted();
+  const refreshed = await renewAuthSession(current.session);
+  if (!refreshed) throw new AuthApiError('Vui lòng đăng nhập để tiếp tục.', 401);
+  if (refreshed.user.id !== stored.session.user.id) throw new AuthApiError('Tài khoản đăng nhập đã thay đổi.', 401);
+  // Only an authentication rejection is retried, once. Never retry other mutations.
+  return send(retryRequest, refreshed.access_token);
+}
+
 export async function restoreAuthSession(): Promise<AuthSession | null> {
   const stored = readAuthSession();
   if (!stored) return null;
-
   try {
     const user = await getCurrentUser(stored.session.access_token);
-    const session = { ...stored.session, user };
-    saveAuthSession(session, stored.remember);
+    const current = readAuthSession();
+    if (!current || current.session.user.id !== stored.session.user.id) return current?.session ?? null;
+    const session = { ...current.session, user };
+    saveAuthSession(session, current.remember);
     return session;
   } catch (error) {
-    if (!(error instanceof AuthApiError) || error.status !== 401) {
-      clearAuthSession();
-      return null;
-    }
-  }
-
-  try {
-    const refreshed = await refreshAccount(stored.session.refresh_token);
-    saveAuthSession(refreshed, stored.remember);
-    return refreshed;
-  } catch {
-    clearAuthSession();
-    return null;
+    if (error instanceof AuthApiError && error.status === 401) return null;
+    return readAuthSession()?.session ?? null;
   }
 }
 
 export async function logoutAccount(): Promise<void> {
   const stored = readAuthSession();
-  try {
-    if (stored) {
-      await apiRequest<void>('/api/auth/logout', {
-        method: 'POST',
-        body: JSON.stringify({ refresh_token: stored.session.refresh_token }),
-      });
-    }
-  } finally {
-    clearAuthSession();
+  clearAuthSession();
+  if (stored) {
+    await apiRequest<void>('/api/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: stored.session.refresh_token }),
+    });
   }
 }

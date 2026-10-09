@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Literal
 
 from app.api.auth import camera_viewer, require_permission
 from app.model_schemas import (
@@ -16,6 +17,7 @@ from app.model_schemas import (
 from app.models.registry import registry
 from app.schemas import ModelItem
 from app.services import model_management_service
+from app.services.ai_observability import assistant_metrics
 from app.services.model_management_service import (
     ModelManagementConflict,
     ModelManagementNotFound,
@@ -70,6 +72,15 @@ def management(
         return ModelManagementResponse(**model_management_service.management_data(user))
     except Exception as exc:
         raise _management_error(exc) from exc
+
+
+@router.get('/assistant-metrics')
+def assistant_usage(user: Annotated[dict, Depends(model_manager)],
+                    period: Literal['24h','7d','30d','all'] = Query(default='7d')) -> dict:
+    try:
+        return assistant_metrics(user, period)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail='Chưa tải được thống kê LLM, RAG và TTS. Hãy thử lại.') from exc
 
 
 @router.post("/{model_code}/deploy", response_model=ModelActionResponse)

@@ -35,10 +35,10 @@ UPDATE safety.event_types et SET name=v.name,description=v.description,updated_a
 FROM (VALUES
  ('SUSPECTED_NO_HELMET','Nghi ngờ không đội mũ bảo hộ','Phát hiện người có khả năng không đội mũ bảo hộ'),
  ('SUSPECTED_NO_VEST','Nghi ngờ không mặc áo bảo hộ','Phát hiện người có khả năng không mặc áo phản quang'),
- ('SAFE_WALKWAY_VIOLATION','Đi vào khu vực nguy hiểm','Người rời lối đi an toàn hoặc đi vào khu vực nguy hiểm'),
+ ('SAFE_WALKWAY_VIOLATION','Đi ngoài lối đi an toàn','Người di chuyển ngoài lối đi đã hiệu chỉnh, được xác minh theo vị trí chân qua nhiều khung hình'),
  ('UNAUTHORIZED_INTERVENTION','Can thiệp trái phép','Phát hiện hành vi can thiệp thiết bị trái phép'),
  ('OPENED_PANEL_COVER','Nắp tủ điện đang mở','Phát hiện nắp tủ điện hoặc bảng điều khiển đang mở'),
- ('FORKLIFT_OVERLOAD','Xe nâng chở quá tải','Phát hiện xe nâng có dấu hiệu chở quá tải'),
+ ('FORKLIFT_OVERLOAD','Nghi ngờ xe nâng chở quá tải','Phát hiện xe nâng chở hàng cao; cần xác minh tải trọng thực tế'),
  ('FALL_DETECTED','Phát hiện té ngã','Phát hiện người bị té hoặc ngã'),
  ('FIRE_SMOKE','Lửa hoặc khói','Phát hiện dấu hiệu lửa hoặc khói'),
  ('RESTRICTED_AREA','Xâm nhập khu vực cấm','Phát hiện người đi vào khu vực hạn chế'),

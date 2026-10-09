@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity,
   BellRing,
@@ -35,6 +37,10 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readAuthSession } from '@/lib/auth';
+import { cameraDemoVideo } from '@/lib/demo-cameras';
+import LiveCameraStream from './live-camera-stream';
+import DetectionLegend from './detection-legend';
+import { type OverlayFrame } from './detection-overlay';
 import styles from './live-monitoring.module.css';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -91,7 +97,7 @@ type Detection = {
 
 type EvidenceEvent = {
   class_name?: string;
-  track_id?: number | null;
+  track_id?: number | string | null;
   timestamp_seconds?: number;
   confidence?: number | null;
   person_confidence?: number | null;
@@ -110,10 +116,10 @@ const CAMERA_META = [
 ] as const;
 
 const LABELS_VI: Record<string, string> = {
-  'Safe Walkway Violation': 'Đi vào khu vực nguy hiểm',
+  'Safe Walkway Violation': 'Đi ngoài lối đi an toàn',
   'Unauthorized Intervention': 'Can thiệp trái phép',
   'Opened Panel Cover': 'Nắp tủ điện đang mở',
-  'Carrying Overload with Forklift': 'Xe nâng chở quá tải',
+  'Carrying Overload with Forklift': 'Nghi ngờ xe nâng chở quá tải',
   'Suspected no helmet': 'Nghi ngờ không đội mũ bảo hộ',
   'Suspected no vest': 'Nghi ngờ không mặc áo bảo hộ',
   'Authorized Intervention': 'Can thiệp được cấp phép',
@@ -172,24 +178,24 @@ export default function LiveMonitoring() {
   const [muted, setMuted] = useState(true);
   const [showOverlay, setShowOverlay] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
-  const [streamUrls, setStreamUrls] = useState<Record<number, string>>({});
-  const [streamErrors, setStreamErrors] = useState<Record<number, string>>({});
+  const [streamRevision, setStreamRevision] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState('');
   const [detections, setDetections] = useState<Detection[]>([]);
+  const [cameraOverlays, setCameraOverlays] = useState<Record<string, Record<string, OverlayFrame[]>>>({});
   const [result, setResult] = useState<InferenceResult | null>(null);
   const [toast, setToast] = useState('');
   const gridRef = useRef<HTMLDivElement>(null);
-  const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
-  const objectUrls = useRef<Record<number, string>>({});
+  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
 
   const loadCatalog = useCallback(async () => {
+    setStreamRevision(current => current + 1);
     setLoading(true);
     setConnectionError('');
     try {
       const [videoResponse, modelResponse] = await Promise.all([
-        fetch(API_BASE + '/api/videos/test', { headers: authHeaders() }),
-        fetch(API_BASE + '/api/models', { headers: authHeaders() }),
+        authenticatedFetch(API_BASE + '/api/videos/test', { headers: authHeaders() }),
+        authenticatedFetch(API_BASE + '/api/models', { headers: authHeaders() }),
       ]);
       if (!videoResponse.ok) {
         const payload = await videoResponse.json().catch(() => null);
@@ -209,16 +215,10 @@ export default function LiveMonitoring() {
     void loadCatalog();
   }, [loadCatalog]);
 
-  useEffect(() => {
-    const urls = objectUrls.current;
-    return () => {
-      Object.values(urls).forEach(url => URL.revokeObjectURL(url));
-    };
-  }, []);
 
   const cameras = useMemo<CameraItem[]>(() => {
-    return CAMERA_META.flatMap((meta, index): CameraItem[] => {
-      const video = videos[index];
+    return CAMERA_META.flatMap((meta): CameraItem[] => {
+      const video = cameraDemoVideo(videos, meta[0]);
       return video ? [{
         id: meta[0],
         name: meta[1],
@@ -253,44 +253,13 @@ export default function LiveMonitoring() {
   }, [filteredCameras, layout, selectedId]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const missing = visibleCameras.filter(camera => !objectUrls.current[camera.video.id]);
-    if (!missing.length) return () => controller.abort();
-
-    void Promise.all(missing.map(async camera => {
-      try {
-        const response = await fetch(API_BASE + camera.video.stream_url, {
-          headers: authHeaders(),
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const blobUrl = URL.createObjectURL(await response.blob());
-        if (controller.signal.aborted) {
-          URL.revokeObjectURL(blobUrl);
-          return;
-        }
-        objectUrls.current[camera.video.id] = blobUrl;
-        setStreamUrls(current => ({ ...current, [camera.video.id]: blobUrl }));
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          setStreamErrors(current => ({
-            ...current,
-            [camera.video.id]: error instanceof Error ? error.message : 'Lỗi tải luồng',
-          }));
-        }
-      }
-    }));
-    return () => controller.abort();
-  }, [visibleCameras]);
-
-  useEffect(() => {
     Object.values(videoRefs.current).forEach(video => {
       if (!video) return;
       video.muted = muted;
       if (playing) void video.play().catch(() => undefined);
       else video.pause();
     });
-  }, [muted, playing, streamUrls]);
+  }, [muted, playing, visibleCameras]);
 
   const selectCamera = (camera: CameraItem) => {
     setSelectedId(camera.id);
@@ -306,7 +275,7 @@ export default function LiveMonitoring() {
 
   const captureSnapshot = () => {
     if (!selectedCamera) return;
-    const video = videoRefs.current[selectedCamera.video.id];
+    const video = videoRefs.current[selectedCamera.id];
     if (!video || !video.videoWidth) {
       setToast('Camera chưa sẵn sàng để chụp ảnh.');
       return;
@@ -336,7 +305,7 @@ export default function LiveMonitoring() {
       let totalSaved = 0;
       for (const model of connected) {
         setAnalysisProgress('Đang chạy ' + model.name + '...');
-        const response = await fetch(API_BASE + '/api/inference', {
+        const response = await authenticatedFetch(API_BASE + '/api/inference', {
           method: 'POST',
           headers: authHeaders(true),
           body: JSON.stringify({
@@ -349,28 +318,30 @@ export default function LiveMonitoring() {
         if (!response.ok) throw new Error(getErrorMessage(payload));
         const inference = payload as InferenceResult;
         setResult(inference);
+        const frames = Array.isArray(inference.metrics.overlay_frames) ? inference.metrics.overlay_frames as OverlayFrame[] : [];
+        setCameraOverlays(current => ({ ...current, [selectedCamera.id]: { ...current[selectedCamera.id], [model.name]: frames } }));
         totalSaved += inference.violations_saved || 0;
         const evidence = Array.isArray(inference.metrics.evidence_events)
           ? inference.metrics.evidence_events as EvidenceEvent[]
           : [];
-        if (model.name === 'RF-DETR' && evidence.length) {
+        if (evidence.length) {
           evidence.forEach((event, index) => {
             const label = event.class_name || inference.prediction;
             const confidence = event.confidence ?? event.person_confidence ?? null;
             newDetections.push({
-              id: selectedCamera.id + '-' + model.name + '-' + Date.now() + '-' + index,
+              id: inference.event_ids[index] || selectedCamera.id + '-' + selectedCamera.video.id + '-' + model.name + '-' + event.track_id + '-' + label,
               cameraId: selectedCamera.id,
-              title: translateLabel(label) + (event.track_id ? ' · Người #' + event.track_id : ''),
+              title: translateLabel(label) + (model.name === 'RF-DETR' && typeof event.track_id === 'number' ? ' · Người #' + event.track_id : ''),
               model: model.name,
               confidence: typeof confidence === 'number' && Number.isFinite(confidence) ? confidence : null,
               time: new Date().toLocaleTimeString('vi-VN'),
               severity: severityFor(label),
             });
           });
-        } else {
-          const severity = severityFor(inference.prediction);
+        } else if (severityFor(inference.prediction) === 'safe') {
+          const severity = 'safe';
           newDetections.push({
-            id: selectedCamera.id + '-' + model.name + '-' + Date.now(),
+            id: selectedCamera.id + '-' + selectedCamera.video.id + '-' + model.name + '-safe',
             cameraId: selectedCamera.id,
             title: translateLabel(inference.prediction),
             model: model.name,
@@ -380,7 +351,7 @@ export default function LiveMonitoring() {
           });
         }
       }
-      setDetections(current => [...newDetections.reverse(), ...current].slice(0, 30));
+      setDetections(current => Array.from(new Map([...newDetections.reverse(), ...current].map(item => [item.id, item])).values()).slice(0, 30));
       setToast(
         totalSaved > 0
           ? 'Đã lưu ' + totalSaved + ' vi phạm của ' + selectedCamera.id + ' vào Cảnh báo.'
@@ -460,6 +431,7 @@ export default function LiveMonitoring() {
       ) : (
         <div className={panelOpen ? styles.workspace : styles.workspaceWide}>
           <div className={styles.monitorColumn}>
+            <DetectionLegend />
             <div
               ref={gridRef}
               className={styles.cameraGrid}
@@ -469,40 +441,21 @@ export default function LiveMonitoring() {
                 <div className={styles.gridLoading}><LoaderCircle className={styles.spinning} size={24} /><span>Đang thiết lập các luồng camera...</span></div>
               ) : visibleCameras.length ? visibleCameras.map(camera => {
                 const selected = camera.id === selectedId;
-                const source = streamUrls[camera.video.id];
-                const cameraDetections = detections.filter(item => item.cameraId === camera.id);
+                const source = /^https?:\/\//.test(camera.video.stream_url) ? camera.video.stream_url : API_BASE + camera.video.stream_url;
                 return (
                   <article
                     key={camera.id}
                     className={selected ? styles.cameraTile + ' ' + styles.selectedTile : styles.cameraTile}
                     onClick={() => selectCamera(camera)}
                   >
-                    {source ? (
-                      <video
-                        ref={node => { videoRefs.current[camera.video.id] = node; }}
-                        src={source}
-                        autoPlay
-                        muted={muted}
-                        loop
-                        playsInline
-                        preload="metadata"
-                      />
-                    ) : (
-                      <div className={styles.streamPlaceholder}>
-                        {streamErrors[camera.video.id] ? <WifiOff size={21} /> : <LoaderCircle className={styles.spinning} size={21} />}
-                        <span>{streamErrors[camera.video.id] || 'Đang tải luồng bảo mật'}</span>
-                      </div>
-                    )}
+                    <LiveCameraStream key={source + ':' + streamRevision} src={source} playing={playing} muted={muted}
+                      frames={showOverlay ? Object.values(cameraOverlays[camera.id] || {}).flat() : undefined} label={translateLabel}
+                      frameWidth={camera.video.width || undefined} frameHeight={camera.video.height || undefined}
+                      onElement={node => { videoRefs.current[camera.id] = node; }} />
                     <div className={styles.tileTop}>
                       <span className={styles.live}><i /> LIVE</span>
                       <span className={styles.cameraCode}>{camera.id}</span>
                     </div>
-                    {showOverlay && cameraDetections[0] && (
-                      <div className={styles.aiOverlay} data-severity={cameraDetections[0].severity}>
-                        <span><ScanLine size={12} /> {cameraDetections[0].title}</span>
-                        {cameraDetections[0].confidence !== null && <em>{Math.round(cameraDetections[0].confidence * 100)}%</em>}
-                      </div>
-                    )}
                     <div className={styles.tileBottom}>
                       <div><strong>{camera.name}</strong><span><MapPin size={10} /> {camera.zone}</span></div>
                       <span><Wifi size={12} /> {camera.video.width || '—'}p</span>
@@ -516,8 +469,8 @@ export default function LiveMonitoring() {
 
             <div className={styles.playerControls}>
               <div>
-                <button type="button" onClick={() => setPlaying(value => !value)}>{playing ? <Pause size={16} /> : <Play size={16} />}</button>
-                <button type="button" onClick={() => setMuted(value => !value)}>{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
+                <button type="button" aria-label={playing ? 'Tạm dừng tất cả camera' : 'Phát tất cả camera'} onClick={() => setPlaying(value => !value)}>{playing ? <Pause size={16} /> : <Play size={16} />}</button>
+                <button type="button" aria-label={muted ? 'Bật âm thanh' : 'Tắt âm thanh'} onClick={() => setMuted(value => !value)}>{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
                 <span><CircleDot size={12} /> {selectedCamera?.id || '—'} · {selectedCamera?.name || 'Chưa chọn camera'}</span>
               </div>
               <div>

@@ -66,5 +66,7 @@ def create_inference(
         ground_truth=list(video.labels),
         persisted=result.persisted,
         event_ids=list(result.event_ids),
-        violations_saved=len(result.event_ids),
+        violations_saved=len(result.new_event_ids),
+        new_event_ids=list(result.new_event_ids),
+        reused=result.reused,
     )

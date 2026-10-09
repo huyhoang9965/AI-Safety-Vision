@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import unicodedata
 from datetime import date, datetime
@@ -8,8 +9,11 @@ from typing import Any
 from uuid import UUID
 
 from app.chat_schemas import ChatSendRequest
+from app.config import get_settings
+from app.services.chat_llm import ChatProviderError, generate_answer
 from app.database.database import connection
 from app.services import alert_service, camera_service, incident_service, user_service
+from app.services import ai_observability
 
 
 class ChatNotFoundError(ValueError):
@@ -17,10 +21,6 @@ class ChatNotFoundError(ValueError):
 
 
 class ChatAccessError(ValueError):
-    pass
-
-
-class ChatProviderError(RuntimeError):
     pass
 
 
@@ -50,19 +50,21 @@ def _primary_membership(user: dict[str, Any]) -> dict[str, Any]:
 
 
 def _permission_set(user: dict[str, Any]) -> set[str]:
-    return {
-        permission
-        for membership in user.get("memberships", [])
-        for permission in membership.get("permissions", [])
-    }
+    return set(_primary_membership(user).get("permissions", []))
 
 
 def status() -> dict[str, Any]:
+    settings = get_settings()
+    configured = bool(settings.openrouter_api_key)
     return {
         "available": True,
-        "provider": "Trợ lý dữ liệu nội bộ",
-        "model": "local-readonly-v1",
-        "mode": "local",
+        "provider": "OpenRouter" if configured else "Trợ lý cơ bản",
+        "model": settings.openrouter_model if configured else "local-readonly-v1",
+        "mode": "openrouter" if configured else "local",
+        "llm_configured": configured,
+        "speech_available": configured and settings.chat_tts_enabled,
+        "speech_provider": "OpenRouter",
+        "speech_model": settings.chat_tts_model if configured and settings.chat_tts_enabled else None,
         "suggested_prompts": SUGGESTIONS,
     }
 
@@ -150,13 +152,19 @@ def _save_message(conn: Any, conversation_id: UUID, role: str, content: str,
 def _history(conversation_id: UUID, limit: int = 16) -> list[dict[str, str]]:
     with connection() as conn:
         rows = conn.execute(
-            """SELECT role,content FROM (
-                 SELECT role,content,created_at FROM safety.chat_messages
+            """SELECT role,content,metadata FROM (
+                 SELECT role,content,metadata,created_at FROM safety.chat_messages
                  WHERE conversation_id=%s AND role IN ('user','assistant')
                  ORDER BY created_at DESC LIMIT %s
                ) recent ORDER BY created_at""", (conversation_id, limit),
         ).fetchall()
-    return [{"role": row["role"], "content": row["content"]} for row in rows]
+    share = get_settings().chat_llm_share_internal_data
+    return [
+        {"role": row["role"], "content": row["content"]
+         if share or row["role"] == "user" or (row.get("metadata") or {}).get("external_safe")
+         else "Đã trả lời bằng dữ liệu nội bộ; chi tiết không được chia sẻ với LLM."}
+        for row in rows
+    ]
 
 
 def _json_safe(value: Any) -> Any:
@@ -192,27 +200,27 @@ def _tool_definitions(user: dict[str, Any]) -> list[dict[str, Any]]:
         "list_cameras": {
             "description": "Liệt kê camera theo trạng thái hoặc từ khóa. Dùng khi hỏi tình trạng camera, kết nối, vị trí hoặc thiết bị.",
             "parameters": {"type": "object", "properties": {
-                "status": {"enum": [None, "online", "offline", "warning", "maintenance", "disabled"]},
+                "status": {"type": ["string", "null"], "enum": [None, "online", "offline", "warning", "maintenance", "disabled"]},
                 "search": {"type": ["string", "null"]},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Số bản ghi từ 1 đến 20; mặc định 10 khi người dùng không chỉ định."},
             }, "required": ["status", "search", "limit"], "additionalProperties": False},
         },
         "list_alerts": {
             "description": "Liệt kê cảnh báo/vi phạm AI theo trạng thái, mức nghiêm trọng và khoảng thời gian.",
             "parameters": {"type": "object", "properties": {
-                "status": {"enum": [None, "new", "acknowledged", "resolved", "dismissed"]},
-                "severity": {"enum": [None, "low", "medium", "high", "critical"]},
-                "period": {"enum": ["today", "7d", "30d", "90d", "all"]},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                "status": {"type": ["string", "null"], "enum": [None, "new", "acknowledged", "resolved", "dismissed"]},
+                "severity": {"type": ["string", "null"], "enum": [None, "low", "medium", "high", "critical"]},
+                "period": {"type": "string", "enum": ["today", "7d", "30d", "90d", "all"]},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Số bản ghi từ 1 đến 20; mặc định 10 khi người dùng không chỉ định."},
             }, "required": ["status", "severity", "period", "limit"], "additionalProperties": False},
         },
         "list_incidents": {
             "description": "Liệt kê sự cố theo trạng thái, mức nghiêm trọng và thời gian; kết quả có SLA/quá hạn.",
             "parameters": {"type": "object", "properties": {
-                "status": {"enum": [None, "open", "investigating", "resolved", "closed"]},
-                "severity": {"enum": [None, "low", "medium", "high", "critical"]},
-                "period": {"enum": ["today", "7d", "30d", "90d", "all"]},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                "status": {"type": ["string", "null"], "enum": [None, "open", "investigating", "resolved", "closed"]},
+                "severity": {"type": ["string", "null"], "enum": [None, "low", "medium", "high", "critical"]},
+                "period": {"type": "string", "enum": ["today", "7d", "30d", "90d", "all"]},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Số bản ghi từ 1 đến 20; mặc định 10 khi người dùng không chỉ định."},
             }, "required": ["status", "severity", "period", "limit"], "additionalProperties": False},
         },
         "get_incident_detail": {
@@ -224,22 +232,26 @@ def _tool_definitions(user: dict[str, Any]) -> list[dict[str, Any]]:
         "list_users": {
             "description": "Liệt kê tài khoản, vai trò, trạng thái và phiên đăng nhập trong tổ chức.",
             "parameters": {"type": "object", "properties": {
-                "status": {"enum": [None, "pending", "active", "locked", "disabled"]},
+                "status": {"type": ["string", "null"], "enum": [None, "pending", "active", "locked", "disabled"]},
                 "role_code": {"type": ["string", "null"]},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Số bản ghi từ 1 đến 20; mặc định 10 khi người dùng không chỉ định."},
             }, "required": ["status", "role_code", "limit"], "additionalProperties": False},
         },
     }
     return [
-        {"type": "function", "name": name, "description": definitions[name]["description"],
-         "parameters": definitions[name]["parameters"], "strict": True}
-        for name in _allowed_tool_names(user) if name in definitions
+        {"type": "function", "function": {
+            "name": name, "description": definitions[name]["description"],
+            "parameters": definitions[name]["parameters"], "strict": True,
+        }}
+        for name in sorted(_allowed_tool_names(user)) if name in definitions
     ]
 
 
 def _execute_tool(name: str, arguments: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     if name not in _allowed_tool_names(user):
         raise ChatAccessError("Bạn không có quyền sử dụng công cụ " + name)
+    # A conversation belongs to one organization, even for multi-org accounts.
+    user = {**user, "memberships": [_primary_membership(user)]}
     limit = max(1, min(int(arguments.get("limit") or 10), 20))
     if name == "get_dashboard_summary":
         permissions = _permission_set(user)
@@ -331,6 +343,28 @@ def _source_list(results: list[tuple[str, dict[str, Any]]]) -> list[dict[str, st
 
 def _local_answer(message: str, user: dict[str, Any]) -> tuple[str, list[dict[str, Any]], list[dict[str, str]]]:
     query = _plain(message)
+    conversational = re.sub(r"[^\w\s]", "", query).strip()
+    if re.fullmatch(r"(?:(?:xin )?chao(?: ban| moi nguoi| tro ly| ai)?|hello(?: there)?|hi|hey|alo)", conversational):
+        return "Chào bạn! Mình là trợ lý AI của hệ thống. Hôm nay bạn muốn mình hỗ trợ gì?", [], []
+    if re.fullmatch(r"(?:cam on(?: ban| nhieu| nhe)?|thank(?:s| you)(?: very much)?)", conversational):
+        return "Không có gì bạn nhé! Nếu cần hỗ trợ thêm, cứ nhắn mình.", [], []
+    if any(phrase in conversational for phrase in ("ban la ai", "ban lam duoc gi", "giup duoc gi")):
+        return "Mình là trợ lý AI của hệ thống, có thể hỗ trợ bạn xem camera, cảnh báo và sự cố theo quyền tài khoản. Bạn muốn tìm hiểu phần nào?", [], []
+    permissions = _permission_set(user)
+    for phrases, permission in (
+        (("camera", "ngoai tuyen", "mat ket noi"), "camera.view"),
+        (("canh bao", "vi pham", "mu bao ho", "ao bao ho"), "event.view"),
+        (("su co", "qua han", "sla"), "incident.view"),
+        (("nguoi dung", "tai khoan", "phan quyen", "phien dang nhap"), "user.view"),
+    ):
+        if any(phrase in query for phrase in phrases) and permission not in permissions:
+            return "Tài khoản của bạn chưa có quyền xem dữ liệu này. Bạn có thể liên hệ quản trị viên để được cấp quyền.", [], []
+    if not any(phrase in query for phrase in (
+        "camera", "ngoai tuyen", "mat ket noi", "canh bao", "vi pham", "mu bao ho",
+        "ao bao ho", "su co", "qua han", "sla", "nguoi dung", "tai khoan",
+        "phan quyen", "phien dang nhap", "tong quan", "tom tat", "tinh hinh", "dashboard",
+    )):
+        return "Mình đang ở chế độ cơ bản. Bạn có thể hỏi về camera, cảnh báo hoặc sự cố; khi kết nối LLM, mình sẽ hỗ trợ trò chuyện linh hoạt hơn.", [], []
     allowed = _allowed_tool_names(user)
     name = "get_dashboard_summary"
     arguments: dict[str, Any] = {}
@@ -371,19 +405,22 @@ def _local_answer(message: str, user: dict[str, Any]) -> tuple[str, list[dict[st
 
 def _format_local_result(name: str, result: dict[str, Any], query: str) -> str:
     if name == "get_dashboard_summary":
-        cameras = result.get("cameras", {})
-        alerts = result.get("alerts", {})
-        incidents = result.get("incidents", {})
-        users = result.get("users", {})
-        return (
-            "Tóm tắt vận hành hiện tại:\n\n"
-            f"• Camera: {cameras.get('cameras', 0)} thiết bị, {cameras.get('online', 0)} trực tuyến, "
-            f"{cameras.get('offline', 0)} ngoại tuyến và {cameras.get('warning', 0)} cảnh báo.\n"
-            f"• Cảnh báo hôm nay: {alerts.get('total', 0)}, trong đó {alerts.get('critical', 0)} nghiêm trọng.\n"
-            f"• Sự cố 30 ngày: {incidents.get('total', 0)}, {incidents.get('overdue', 0)} quá hạn.\n"
-            f"• Người dùng: {users.get('total', 0)} tài khoản, {users.get('active', 0)} đang hoạt động.\n\n"
-            "Dữ liệu được đọc trực tiếp từ hệ thống tại thời điểm yêu cầu."
-        )
+        lines = ["Mình đã kiểm tra tình hình vận hành hiện tại:"]
+        if "cameras" in result:
+            data = result["cameras"]
+            lines.append(f"• Camera: {data.get('cameras', 0)} thiết bị, {data.get('online', 0)} trực tuyến, {data.get('offline', 0)} ngoại tuyến.")
+        if "alerts" in result:
+            data = result["alerts"]
+            lines.append(f"• Cảnh báo hôm nay: {data.get('total', 0)}; {data.get('critical_open', 0)} cảnh báo nghiêm trọng đang mở.")
+        if "incidents" in result:
+            data = result["incidents"]
+            lines.append(f"• Sự cố 30 ngày: {data.get('total', 0)}; {data.get('overdue', 0)} quá hạn.")
+        if "users" in result:
+            data = result["users"]
+            lines.append(f"• Người dùng: {data.get('total', 0)} tài khoản, {data.get('active', 0)} đang hoạt động.")
+        if len(lines) == 1:
+            return "Tài khoản của bạn chưa có quyền xem các số liệu tổng quan."
+        return "\n".join(lines)
     if name == "list_cameras":
         items = result.get("items", [])
         lines = [f"Tìm thấy {result.get('total', 0)} camera phù hợp."]
@@ -420,32 +457,68 @@ def _format_local_result(name: str, result: dict[str, Any], query: str) -> str:
             f"{item['active_sessions']} phiên hoạt động." for item in items
         )
         return "\n".join(lines)
+    if name == "get_incident_detail":
+        item = result.get("incident", {})
+        lines = [f"Sự cố #{item.get('incident_no', '')}: {item.get('title', 'Chưa có tiêu đề')}"]
+        for key, label in (
+            ("description", "Mô tả"), ("severity", "Mức độ"), ("status", "Trạng thái"),
+            ("site_name", "Địa điểm"), ("due_at", "Hạn xử lý"),
+            ("root_cause", "Nguyên nhân"), ("corrective_action", "Biện pháp"), ("resolution", "Kết quả xử lý"),
+        ):
+            if item.get(key) is not None:
+                lines.append(f"• {label}: {item[key]}")
+        return "\n".join(lines)
     return "Đã đọc dữ liệu hệ thống theo quyền của bạn."
 
 
 def send_message(body: ChatSendRequest, user: dict[str, Any]) -> dict[str, Any]:
-    content = " ".join(body.message.strip().split())
+    content = body.message.strip()
     if not content:
         raise ValueError("Tin nhắn không được để trống")
+    settings = get_settings()
+    history: list[dict[str, str]] = []
+    if body.conversation_id:
+        with connection() as conn:
+            row = _conversation(conn, body.conversation_id, user)
+            if row["status"] != "open":
+                raise ValueError("Cuộc hội thoại đã được lưu trữ")
+        history = _history(body.conversation_id, settings.chat_history_messages)
+    started = time.perf_counter()
+    if settings.openrouter_api_key:
+        response = generate_answer(
+            [*history, {"role": "user", "content": content}],
+            user, _tool_definitions(user), _execute_tool, settings,
+            lambda name, result, query: _format_local_result(name, result, _plain(query)),
+            observer=lambda event: ai_observability.record_provider_event(user, event),
+        )
+        answer, tool_records = response.content, response.tool_records
+        model, input_tokens, output_tokens = response.model, response.input_tokens, response.output_tokens
+        sources = _source_list([(r["name"], r["result"]) for r in tool_records if r["status"] == "completed"])
+        mode = "openrouter"
+    else:
+        answer, tool_records, sources = _local_answer(content, user)
+        model, input_tokens, output_tokens, mode = "local-readonly-v1", 0, 0, "local"
+        for record in tool_records:
+            record['observability_id'] = ai_observability.record_provider_event(user, ai_observability.retrieval_event(record))
+    latency = round((time.perf_counter() - started) * 1000)
+    metadata = {"mode": mode, "sources": sources,
+                "tools": [r["name"] for r in tool_records], "read_only": True,
+                "external_safe": not tool_records,
+                "internal_data_shared": bool(settings.openrouter_api_key and settings.chat_llm_share_internal_data)}
+    # Commit a complete turn only after generation succeeds, avoiding orphaned
+    # messages/conversations on provider errors and keeping DB connections short.
     with connection() as conn:
         if body.conversation_id:
-            conversation_row = _conversation(conn, body.conversation_id, user)
-            if conversation_row["status"] != "open":
+            row = _conversation(conn, body.conversation_id, user)
+            if row["status"] != "open":
                 raise ValueError("Cuộc hội thoại đã được lưu trữ")
             conversation_id = body.conversation_id
         else:
             conversation_id = _create_conversation(conn, content, user)
         user_message = _save_message(conn, conversation_id, "user", content)
-
-    started = time.perf_counter()
-    answer, tool_records, sources = _local_answer(content, user)
-    latency = round((time.perf_counter() - started) * 1000)
-    metadata = {"mode": "local", "sources": sources,
-                "tools": [record["name"] for record in tool_records], "read_only": True}
-    with connection() as conn:
         assistant_message = _save_message(
-            conn, conversation_id, "assistant", answer, "local-readonly-v1",
-            0, 0, latency, metadata,
+            conn, conversation_id, "assistant", answer, model,
+            input_tokens, output_tokens, latency, metadata,
         )
         for record in tool_records:
             conn.execute(
@@ -454,17 +527,16 @@ def send_message(body: ChatSendRequest, user: dict[str, Any]) -> dict[str, Any]:
                    VALUES (%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s)""",
                 (conversation_id, user_message["id"], record["name"],
                  json.dumps(record["arguments"], ensure_ascii=False),
-                 json.dumps(record["result"], ensure_ascii=False, default=str),
+                 json.dumps({**record["result"], **({'_observability_id': record['observability_id']}
+                    if isinstance(record.get('observability_id'), str) else {})}, ensure_ascii=False, default=str),
                  record["status"], record["duration_ms"]),
             )
     return {
-        "conversation_id": conversation_id,
-        "user_message": user_message,
+        "conversation_id": conversation_id, "user_message": user_message,
         "assistant_message": assistant_message,
-        "tool_calls": [{"name": record["name"], "label": TOOL_LABELS.get(record["name"], record["name"]),
-                        "status": record["status"], "duration_ms": record["duration_ms"]}
-                       for record in tool_records],
-        "mode": "local",
+        "tool_calls": [{"name": r["name"], "label": TOOL_LABELS.get(r["name"], r["name"]),
+                        "status": r["status"], "duration_ms": r["duration_ms"]} for r in tool_records],
+        "mode": mode,
     }
 
 

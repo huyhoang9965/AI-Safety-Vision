@@ -32,7 +32,7 @@
   align-items: center;
   gap: 6px;
   color: #2f6fec;
-  font-size: .62rem;
+  font-size: calc(.62rem + 3px);
   font-weight: 850;
   letter-spacing: .13em;
 }
@@ -54,7 +54,7 @@
   border-radius: 9px;
   background: #fff;
   color: #c14d45;
-  font-size: .68rem;
+  font-size: calc(.68rem + 2px);
   font-weight: 700;
 }
 
@@ -82,7 +82,7 @@
   background: #fff;
   color: #526077;
   font: inherit;
-  font-size: .68rem;
+  font-size: calc(.68rem + 2px);
   font-weight: 700;
   cursor: pointer;
 }
@@ -134,7 +134,7 @@
 .metrics small {
   overflow: hidden;
   color: #626e82;
-  font-size: .65rem;
+  font-size: calc(.65rem + 2px);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -143,7 +143,7 @@
 .metrics em {
   grid-column: 2;
   color: #9aa2b1;
-  font-size: .55rem;
+  font-size: calc(.55rem + 3px);
   font-style: normal;
 }
 
@@ -191,7 +191,7 @@
   background: transparent;
   color: #46536a;
   font: inherit;
-  font-size: .66rem;
+  font-size: calc(.66rem + 2px);
 }
 
 .select select {
@@ -202,7 +202,7 @@
 .viewControls > span {
   margin-right: 2px;
   color: #8c95a5;
-  font-size: .59rem;
+  font-size: calc(.59rem + 3px);
   font-weight: 700;
 }
 
@@ -226,7 +226,7 @@
   background: #fff;
   color: #6d788b;
   font: inherit;
-  font-size: .62rem;
+  font-size: calc(.62rem + 3px);
   font-weight: 700;
   cursor: pointer;
 }
@@ -249,11 +249,10 @@
   gap: 6px;
   min-height: 440px;
   overflow: hidden;
-  padding: 6px;
-  border: 1px solid #273245;
+  padding: 0;
+  border: 0;
   border-radius: 13px;
-  background: #151c27;
-  box-shadow: 0 12px 32px rgba(17, 27, 43, .15);
+  background: transparent;
 }
 
 .cameraGrid[data-layout="1"] { grid-template-columns: 1fr; }
@@ -264,7 +263,7 @@
   padding: 10px;
   border: 0;
   border-radius: 0;
-  background: #090e16;
+  background: #f4f7fa;
 }
 
 .cameraTile {
@@ -272,11 +271,9 @@
   min-width: 0;
   min-height: 210px;
   overflow: hidden;
-  border: 1px solid #344055;
+  border: 1px solid #dce4e9;
   border-radius: 8px;
-  background:
-    radial-gradient(circle at 50% 35%, rgba(79, 98, 127, .2), transparent 45%),
-    #111822;
+  background: #fff;
   cursor: pointer;
 }
 
@@ -297,10 +294,31 @@
 
 .cameraTile video {
   width: 100%;
-  height: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
   display: block;
-  object-fit: cover;
-  background: #0d141d;
+  object-fit: contain;
+  background: transparent;
+}
+
+.cameraViewport { position: relative; aspect-ratio: 16 / 9; }
+.cameraViewport .streamPlaceholder {
+  position: absolute;
+  inset: 0;
+  padding: 40px 12px 12px;
+  text-align: center;
+  background: #f8fafc;
+}
+.streamPlaceholder button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  color: #2563eb;
+  border: 1px solid #cdddfb;
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
 }
 
 .streamPlaceholder,
@@ -313,7 +331,7 @@
   flex-direction: column;
   gap: 8px;
   color: #7f8ca1;
-  font-size: .62rem;
+  font-size: calc(.62rem + 3px);
 }
 
 .gridLoading { grid-column: 1 / -1; min-height: 420px; }
@@ -333,7 +351,7 @@
 .tileTop {
   top: 0;
   padding: 10px;
-  background: linear-gradient(rgba(5, 9, 15, .65), transparent);
+  background: transparent;
 }
 
 .live,
@@ -343,9 +361,9 @@
   gap: 5px;
   padding: 4px 6px;
   border-radius: 5px;
-  background: rgba(10, 16, 25, .66);
-  color: #fff;
-  font-size: .5rem;
+  background: rgba(255, 255, 255, .94);
+  color: #34465b;
+  font-size: calc(.5rem + 3px);
   font-weight: 850;
   letter-spacing: .08em;
 }
@@ -359,11 +377,11 @@
 }
 
 .tileBottom {
-  bottom: 0;
+  position: relative;
   align-items: flex-end;
-  padding: 32px 11px 10px;
-  background: linear-gradient(transparent, rgba(5, 9, 15, .82));
-  color: #fff;
+  padding: 10px 11px;
+  background: #fff;
+  color: #34465b;
 }
 
 .tileBottom > div {
@@ -371,14 +389,14 @@
   gap: 3px;
 }
 
-.tileBottom strong { font-size: .66rem; }
+.tileBottom strong { font-size: calc(.66rem + 2px); }
 
 .tileBottom span {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: rgba(255, 255, 255, .68);
-  font-size: .5rem;
+  color: #697887;
+  font-size: calc(.5rem + 3px);
 }
 
 .aiOverlay {
@@ -394,7 +412,7 @@
   padding: 7px;
   border: 2px solid #e3a73e;
   color: #fff;
-  font-size: .51rem;
+  font-size: calc(.51rem + 3px);
   box-shadow: 0 0 22px rgba(227, 167, 62, .28);
   pointer-events: none;
 }
@@ -440,7 +458,7 @@
   gap: 5px;
   margin-left: 5px;
   color: #697589;
-  font-size: .62rem;
+  font-size: calc(.62rem + 3px);
 }
 
 .playerControls button:disabled,
@@ -498,11 +516,11 @@
 
 .sideHeading strong,
 .sectionHeading strong,
-.detectionHeading strong { font-size: .75rem; }
+.detectionHeading strong { font-size: calc(.75rem + 2px); }
 
 .sideHeading span,
 .sectionHeading span,
-.detectionHeading span { color: #929bac; font-size: .57rem; }
+.detectionHeading span { color: #929bac; font-size: calc(.57rem + 3px); }
 
 .alertBadge {
   display: grid;
@@ -512,7 +530,7 @@
   border-radius: 50%;
   background: #ffebe9;
   color: #c94e48 !important;
-  font-size: .65rem !important;
+  font-size: calc(.65rem + 2px) !important;
   font-weight: 800;
 }
 
@@ -544,22 +562,22 @@
 .modelViolet { background: #f0ebff; color: #7657c9; }
 
 .modelStatus > div > div { display: grid; gap: 2px; }
-.modelStatus strong { color: #3c485e; font-size: .64rem; }
-.modelStatus small { color: #919baa; font-size: .51rem; }
+.modelStatus strong { color: #3c485e; font-size: calc(.64rem + 2px); }
+.modelStatus small { color: #919baa; font-size: calc(.51rem + 3px); }
 
 .modelStatus em {
   display: flex;
   align-items: center;
   gap: 4px;
   color: #a36b23;
-  font-size: .5rem;
+  font-size: calc(.5rem + 3px);
   font-style: normal;
   font-weight: 700;
 }
 
 .modelStatus em[data-online="true"] { color: #16815d; }
 .modelStatus em i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.modelEmpty { color: #7e899a; font-size: .58rem; }
+.modelEmpty { color: #7e899a; font-size: calc(.58rem + 3px); }
 
 .detectionHeading {
   min-height: 50px;
@@ -570,7 +588,7 @@
   border: 0;
   background: transparent;
   color: #8791a1;
-  font-size: .55rem;
+  font-size: calc(.55rem + 3px);
   cursor: pointer;
 }
 
@@ -615,9 +633,9 @@
 }
 
 .detectionList button > div { display: grid; gap: 3px; min-width: 0; }
-.detectionList strong { overflow: hidden; font-size: .61rem; text-overflow: ellipsis; white-space: nowrap; }
-.detectionList small { color: #929bac; font-size: .49rem; }
-.detectionList em { color: #657187; font-size: .55rem; font-style: normal; font-weight: 800; }
+.detectionList strong { overflow: hidden; font-size: calc(.61rem + 3px); text-overflow: ellipsis; white-space: nowrap; }
+.detectionList small { color: #929bac; font-size: calc(.49rem + 3px); }
+.detectionList em { color: #657187; font-size: calc(.55rem + 3px); font-style: normal; font-weight: 800; }
 
 .emptyDetections {
   display: flex;
@@ -639,8 +657,8 @@
   color: #2f6fec;
 }
 
-.emptyDetections strong { margin-top: 10px; font-size: .67rem; }
-.emptyDetections p { max-width: 235px; margin: 6px 0 0; color: #929bac; font-size: .55rem; line-height: 1.55; }
+.emptyDetections strong { margin-top: 10px; font-size: calc(.67rem + 2px); }
+.emptyDetections p { max-width: 235px; margin: 6px 0 0; color: #929bac; font-size: calc(.55rem + 3px); line-height: 1.55; }
 
 .resultCard {
   display: grid;
@@ -657,14 +675,14 @@
   gap: 8px;
 }
 
-.resultCard > div strong { font-size: .65rem; }
+.resultCard > div strong { font-size: calc(.65rem + 2px); }
 
 .resultCard > div span {
   padding: 4px 6px;
   border-radius: 5px;
   background: #eaf1ff;
   color: #2f6fec;
-  font-size: .52rem;
+  font-size: calc(.52rem + 3px);
   font-weight: 800;
 }
 
@@ -681,8 +699,8 @@
   min-width: 0;
 }
 
-.resultCard dt { color: #9aa2b0; font-size: .47rem; }
-.resultCard dd { overflow: hidden; margin: 0; color: #556176; font-size: .55rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.resultCard dt { color: #9aa2b0; font-size: calc(.47rem + 3px); }
+.resultCard dd { overflow: hidden; margin: 0; color: #556176; font-size: calc(.55rem + 3px); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 
 .resultCard p {
   display: flex;
@@ -693,7 +711,7 @@
   border-radius: 7px;
   background: #edf3ff;
   color: #5d6c83;
-  font-size: .54rem;
+  font-size: calc(.54rem + 3px);
 }
 
 .resultCard button {
@@ -707,7 +725,7 @@
   background: #26364e;
   color: #fff;
   font: inherit;
-  font-size: .58rem;
+  font-size: calc(.58rem + 3px);
   font-weight: 750;
   cursor: pointer;
 }
@@ -762,15 +780,15 @@
 }
 
 .cameraRows button > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
-.cameraRows strong { overflow: hidden; color: #3d495e; font-size: .61rem; text-overflow: ellipsis; white-space: nowrap; }
-.cameraRows small { color: #98a0ae; font-size: .5rem; }
+.cameraRows strong { overflow: hidden; color: #3d495e; font-size: calc(.61rem + 3px); text-overflow: ellipsis; white-space: nowrap; }
+.cameraRows small { color: #98a0ae; font-size: calc(.5rem + 3px); }
 
 .cameraRows em {
   display: flex;
   align-items: center;
   gap: 5px;
   color: #16815d;
-  font-size: .51rem;
+  font-size: calc(.51rem + 3px);
   font-style: normal;
   font-weight: 700;
 }
@@ -797,8 +815,8 @@
   color: #c94e48;
 }
 
-.errorState strong { margin-top: 13px; font-size: .8rem; }
-.errorState p { max-width: 400px; margin: 7px 0 15px; color: #8d96a5; font-size: .65rem; }
+.errorState strong { margin-top: 13px; font-size: calc(.8rem + 2px); }
+.errorState p { max-width: 400px; margin: 7px 0 15px; color: #8d96a5; font-size: calc(.65rem + 2px); }
 
 .toast {
   position: fixed;
@@ -816,7 +834,7 @@
   background: #fff;
   color: #41516c;
   font: inherit;
-  font-size: .66rem;
+  font-size: calc(.66rem + 2px);
   text-align: left;
   box-shadow: 0 17px 45px rgba(34, 48, 75, .18);
   cursor: pointer;

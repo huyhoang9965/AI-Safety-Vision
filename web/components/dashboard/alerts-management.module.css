@@ -32,7 +32,7 @@
   align-items: center;
   gap: 6px;
   color: #d15a52;
-  font-size: .62rem;
+  font-size: calc(.62rem + 3px);
   font-weight: 850;
   letter-spacing: .13em;
 }
@@ -42,6 +42,9 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 520px;
 }
 
 .headingActions button,
@@ -57,12 +60,17 @@
   background: #fff;
   color: #566278;
   font: inherit;
-  font-size: .64rem;
+  font-size: calc(.64rem + 2px);
   font-weight: 700;
   cursor: pointer;
 }
 
 .headingActions button:disabled { cursor: wait; opacity: .55; }
+
+.headingActions .bulkButton { border-color: #2f6fec; background: #2f6fec; color: #fff; }
+.headingActions .bulkButton:hover:not(:disabled) { background: #245cd2; }
+.headingActions .bulkButton:disabled { cursor: default; }
+.bulkDescription { margin: 16px 16px 0; color: #536078; font-size: 14px; line-height: 1.6; }
 
 .headingActions .liveButton {
   border-color: #c9eadc;
@@ -121,7 +129,7 @@
 .metrics small {
   overflow: hidden;
   color: #626e82;
-  font-size: .64rem;
+  font-size: calc(.64rem + 2px);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -129,14 +137,19 @@
 
 .metrics strong {
   flex: 0 0 auto;
-  font-size: 1.25rem;
-  letter-spacing: -.04em;
+  color: #354157;
+  font-size: .95rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .metrics em {
   grid-column: 2;
   color: #9aa2b1;
-  font-size: .54rem;
+  font-size: calc(.54rem + 3px);
   font-style: normal;
 }
 
@@ -169,7 +182,7 @@
   background: transparent;
   color: #7d8798;
   font: inherit;
-  font-size: .64rem;
+  font-size: calc(.64rem + 2px);
   font-weight: 700;
   cursor: pointer;
 }
@@ -197,7 +210,7 @@
   border-radius: 10px;
   background: #eef1f5;
   color: #7b8698;
-  font-size: .51rem;
+  font-size: calc(.51rem + 3px);
 }
 
 .statusTabs button.activeTab span { background: #e7efff; color: #2f6fec; }
@@ -237,7 +250,7 @@
   background: transparent;
   color: #536077;
   font: inherit;
-  font-size: .61rem;
+  font-size: calc(.61rem + 3px);
 }
 
 .filters label > svg:last-child { flex: 0 0 auto; }
@@ -250,7 +263,7 @@
   background: transparent;
   color: #7d889a;
   font: inherit;
-  font-size: .58rem;
+  font-size: calc(.58rem + 3px);
   font-weight: 700;
   cursor: pointer;
 }
@@ -286,8 +299,8 @@
   gap: 3px;
 }
 
-.listHeading strong { font-size: .74rem; }
-.listHeading span { color: #929bac; font-size: .56rem; }
+.listHeading strong { font-size: calc(.74rem + 2px); }
+.listHeading span { color: #929bac; font-size: calc(.56rem + 3px); }
 
 .listHeading > span {
   display: inline-flex;
@@ -366,7 +379,7 @@
 .alertMain strong {
   overflow: hidden;
   color: #354157;
-  font-size: .7rem;
+  font-size: calc(.7rem + 2px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -377,7 +390,7 @@
   border-radius: 5px;
   background: #edf1f6;
   color: #67748a;
-  font-size: .48rem;
+  font-size: calc(.48rem + 3px);
   font-style: normal;
   font-weight: 800;
 }
@@ -389,7 +402,7 @@
 .alertMain > small {
   overflow: hidden;
   color: #8791a2;
-  font-size: .56rem;
+  font-size: calc(.56rem + 3px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -405,7 +418,7 @@
   align-items: center;
   gap: 4px;
   color: #9aa2b0;
-  font-size: .5rem;
+  font-size: calc(.5rem + 3px);
 }
 
 .severityBadge {
@@ -413,7 +426,7 @@
   border-radius: 6px;
   background: #eef1f5;
   color: #68758a;
-  font-size: .5rem;
+  font-size: calc(.5rem + 3px);
   font-weight: 800;
 }
 
@@ -431,7 +444,7 @@
   padding: 0 14px;
   border-top: 1px solid #e8ecf2;
   color: #8a94a4;
-  font-size: .56rem;
+  font-size: calc(.56rem + 3px);
 }
 
 .pagination div { display: flex; gap: 5px; }
@@ -475,7 +488,7 @@
   border-radius: 6px;
   background: #eef1f5;
   color: #657188;
-  font-size: .5rem;
+  font-size: calc(.5rem + 3px);
   font-style: normal;
   font-weight: 800;
 }
@@ -514,15 +527,16 @@
 }
 
 .detailTitle div { min-width: 0; }
-.detailTitle small { color: #9aa2b0; font-size: .49rem; font-weight: 800; letter-spacing: .07em; }
+.detailTitle small { color: #9aa2b0; font-size: calc(.49rem + 3px); font-weight: 800; letter-spacing: .07em; }
 .detailTitle h2 { margin: 4px 0 3px; font-size: .83rem; line-height: 1.35; }
-.detailTitle p { margin: 0; color: #7d8899; font-size: .56rem; }
+.detailTitle p { margin: 0; color: #7d8899; font-size: calc(.56rem + 3px); }
 
 .evidence {
   position: relative;
   display: grid;
-  min-height: 320px;
-  height: clamp(320px, 35vw, 440px);
+  min-height: 180px;
+  max-height: 300px;
+  padding: 12px;
   place-items: center;
   overflow: hidden;
   background:
@@ -530,9 +544,9 @@
     #141c27;
 }
 
-.evidence img { width: 100%; height: 100%; display: block; object-fit: contain; }
+.evidence img { width: auto; height: auto; max-width: min(100%, 480px); max-height: 276px; display: block; object-fit: contain; }
 
-.evidenceOriginal { display: table; margin: 8px 0 0 auto; color: #245fcb; font-size: .7rem; font-weight: 700; text-decoration: none; }
+.evidenceOriginal { display: table; margin: 8px 0 0 auto; color: #245fcb; font-size: calc(.7rem + 2px); font-weight: 700; text-decoration: none; }
 .evidenceOriginal:hover { text-decoration: underline; }
 
 .evidence > div {
@@ -544,8 +558,8 @@
   text-align: center;
 }
 
-.evidence > div strong { margin-top: 9px; color: #c4cbd5; font-size: .65rem; }
-.evidence > div span { position: static; margin-top: 5px; padding: 0; background: none; font-size: .53rem; line-height: 1.5; }
+.evidence > div strong { margin-top: 9px; color: #c4cbd5; font-size: calc(.65rem + 2px); }
+.evidence > div span { position: static; margin-top: 5px; padding: 0; background: none; font-size: calc(.53rem + 3px); line-height: 1.5; }
 
 .evidence > span,
 .evidence > em {
@@ -558,7 +572,7 @@
   border-radius: 5px;
   background: rgba(9, 14, 22, .72);
   color: #fff;
-  font-size: .49rem;
+  font-size: calc(.49rem + 3px);
   font-style: normal;
   font-weight: 700;
 }
@@ -582,9 +596,9 @@
   background: #fff;
 }
 
-.detailMeta small { color: #929bac; font-size: .48rem; }
-.detailMeta strong { overflow: hidden; color: #465269; font-size: .58rem; text-overflow: ellipsis; white-space: nowrap; }
-.detailMeta span { display: inline-flex; align-items: center; gap: 3px; color: #8893a4; font-size: .5rem; }
+.detailMeta small { color: #929bac; font-size: calc(.48rem + 3px); }
+.detailMeta strong { overflow: hidden; color: #465269; font-size: calc(.58rem + 3px); text-overflow: ellipsis; white-space: nowrap; }
+.detailMeta span { display: inline-flex; align-items: center; gap: 3px; color: #8893a4; font-size: calc(.5rem + 3px); }
 
 .description,
 .timeline {
@@ -595,8 +609,8 @@
 }
 
 .description > strong,
-.timeline > strong { color: #3d495f; font-size: .64rem; }
-.description p { margin: 0; color: #727e90; font-size: .56rem; line-height: 1.6; }
+.timeline > strong { color: #3d495f; font-size: calc(.64rem + 2px); }
+.description p { margin: 0; color: #727e90; font-size: calc(.56rem + 3px); line-height: 1.6; }
 
 .timeline { gap: 10px; }
 
@@ -629,8 +643,8 @@
 }
 
 .timelineItem div { display: grid; gap: 2px; }
-.timelineItem strong { font-size: .56rem; }
-.timelineItem small { color: #9aa2b0; font-size: .47rem; }
+.timelineItem strong { font-size: calc(.56rem + 3px); }
+.timelineItem small { color: #9aa2b0; font-size: calc(.47rem + 3px); }
 
 .timeline blockquote {
   margin: 0;
@@ -638,7 +652,7 @@
   border-left: 2px solid #b9c8e7;
   background: #f7f9fc;
   color: #69758a;
-  font-size: .53rem;
+  font-size: calc(.53rem + 3px);
   line-height: 1.5;
 }
 
@@ -652,7 +666,7 @@
   border: 1px solid #dce3ed;
   border-radius: 8px;
   color: #536078;
-  font-size: .56rem;
+  font-size: calc(.56rem + 3px);
   font-weight: 700;
   text-decoration: none;
 }
@@ -675,13 +689,13 @@
   background: #fff;
   color: #58657b;
   font: inherit;
-  font-size: .54rem;
+  font-size: calc(.54rem + 3px);
   font-weight: 750;
   cursor: pointer;
 }
 
 .detailActions button.primaryAction { border-color: #2f6fec; background: #2f6fec; color: #fff; }
-.detailActions > span { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #16815d; font-size: .54rem; }
+.detailActions > span { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: #16815d; font-size: calc(.54rem + 3px); }
 
 .emptyState,
 .loadingState,
@@ -709,9 +723,9 @@
 }
 
 .emptyState strong,
-.noSelection strong { margin-top: 12px; color: #445168; font-size: .73rem; }
+.noSelection strong { margin-top: 12px; color: #445168; font-size: calc(.73rem + 2px); }
 .emptyState p,
-.noSelection p { max-width: 390px; margin: 7px 0 13px; font-size: .58rem; line-height: 1.6; }
+.noSelection p { max-width: 390px; margin: 7px 0 13px; font-size: calc(.58rem + 3px); line-height: 1.6; }
 .emptyState code { color: #5c6c86; }
 
 .emptyState button {
@@ -722,12 +736,12 @@
   background: #fff;
   color: #56637a;
   font: inherit;
-  font-size: .55rem;
+  font-size: calc(.55rem + 3px);
   font-weight: 700;
   cursor: pointer;
 }
 
-.loadingState { flex-direction: row; gap: 8px; font-size: .61rem; }
+.loadingState { flex-direction: row; gap: 8px; font-size: calc(.61rem + 3px); }
 .noSelection { min-height: 600px; }
 
 .errorState {
@@ -743,8 +757,8 @@
 }
 
 .errorState > span { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 50%; background: #ffedeb; color: #c94e48; }
-.errorState strong { margin-top: 12px; font-size: .74rem; }
-.errorState p { margin: 6px 0 14px; color: #8a94a4; font-size: .61rem; }
+.errorState strong { margin-top: 12px; font-size: calc(.74rem + 2px); }
+.errorState p { margin: 6px 0 14px; color: #8a94a4; font-size: calc(.61rem + 3px); }
 
 .modalBackdrop {
   position: fixed;
@@ -787,8 +801,8 @@
 }
 
 .modalHeading div { display: grid; gap: 3px; min-width: 0; }
-.modalHeading strong { font-size: .72rem; }
-.modalHeading small { overflow: hidden; color: #8d96a6; font-size: .54rem; text-overflow: ellipsis; white-space: nowrap; }
+.modalHeading strong { font-size: calc(.72rem + 2px); }
+.modalHeading small { overflow: hidden; color: #8d96a6; font-size: calc(.54rem + 3px); text-overflow: ellipsis; white-space: nowrap; }
 .modalHeading button { display: grid; width: 28px; height: 28px; place-items: center; border: 0; background: transparent; color: #7d8899; cursor: pointer; }
 
 .actionModal > label {
@@ -796,7 +810,7 @@
   gap: 7px;
   padding: 16px;
   color: #536078;
-  font-size: .59rem;
+  font-size: calc(.59rem + 3px);
   font-weight: 700;
 }
 
@@ -809,7 +823,7 @@
   outline: none;
   color: #445168;
   font: inherit;
-  font-size: .63rem;
+  font-size: calc(.63rem + 2px);
   line-height: 1.5;
 }
 
@@ -836,7 +850,7 @@
   background: #fff;
   color: #5d697e;
   font: inherit;
-  font-size: .58rem;
+  font-size: calc(.58rem + 3px);
   font-weight: 750;
   cursor: pointer;
 }
@@ -860,7 +874,7 @@
   background: #fff;
   color: #41516c;
   font: inherit;
-  font-size: .65rem;
+  font-size: calc(.65rem + 2px);
   text-align: left;
   box-shadow: 0 17px 45px rgba(34, 48, 75, .18);
   cursor: pointer;
@@ -904,7 +918,7 @@
 
 @media (max-width: 760px) {
   .heading { align-items: stretch; flex-direction: column; }
-  .headingActions { overflow-x: auto; }
+  .headingActions { justify-content: flex-start; max-width: none; }
   .headingActions button { flex: 0 0 auto; }
   .statusTabs { gap: 17px; }
   .filters { align-items: stretch; flex-direction: column; }
@@ -932,3 +946,12 @@
   .actionModal { animation: none; }
   .detailPanel { transition: none; }
 }
+.overdueNotice { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid #f0c8bf; border-radius: 12px; background: #fff6f3; color: #b34330; }
+.overdueNotice > svg { flex: none; }
+.overdueNotice > div { flex: 1; }
+.overdueNotice strong { font-size: 14px; }
+.overdueNotice p { margin: 4px 0 0; font-size: 13px; line-height: 1.5; }
+.overdueNotice button { flex: none; padding: 8px 12px; border: 1px solid #edb8ab; border-radius: 8px; background: #fff; color: #ad3f2e; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+.alertMain .overdueBadge { display: inline-block; background: #fff0eb; color: #b34330; }
+.overdueDetail { display: flex; align-items: center; gap: 7px; margin: 12px 16px 0; padding: 10px; border-radius: 8px; background: #fff0eb; color: #b34330; font-size: 13px; line-height: 1.5; }
+@media (max-width: 640px) { .overdueNotice { flex-wrap: wrap; } .overdueNotice > div { flex-basis: calc(100% - 40px); } .overdueNotice button { margin-left: 32px; } }

@@ -1,19 +1,22 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3,
   CalendarDays, Camera, ChevronDown, Clock3, Download,
   Factory, FileWarning, Gauge, LoaderCircle, MapPin, RefreshCw, ShieldCheck,
-  Siren, Target, TrendingUp, X,
+  Siren, Target, X,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { readAuthSession } from '@/lib/auth';
+import ReportTrendChart, { type ReportTrend } from './report-trend-chart';
 import styles from './reports-analytics.module.css';
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_URL||'http://localhost:8000').replace(/\/$/,'');
 type Period='7d'|'30d'|'90d'|'365d';
 type NamedMetric={key:string;label:string;total:number;percentage:number};
-type Trend={day:string;total:number;critical:number;resolved:number;incidents:number};
+type ResponseMetrics={pending_events:number;acknowledged_events:number;overdue_events:number;acknowledge_samples:number;resolution_samples:number;acknowledged_within_24h:number;acknowledge_p50_seconds:number|null;acknowledge_p95_seconds:number|null;acknowledge_p99_seconds:number|null;resolution_p50_seconds:number|null;resolution_p95_seconds:number|null;resolution_p99_seconds:number|null};
 type EventType={code:string;name:string;color:string|null;total:number;previous_total:number;change_percent:number|null;average_confidence:number|null};
 type Site={code:string;name:string;total:number;critical:number;open_events:number;resolved:number;resolution_rate:number;cameras:number};
 type RiskCamera={code:string;name:string;site_name:string;zone_name:string|null;status:string;total:number;critical:number;average_confidence:number|null};
@@ -22,7 +25,7 @@ type RecentEvent={id:string;title:string;event_code:string;event_name:string;sev
 type ReportData={
  period:{days:number;start_at:string;end_at:string;previous_start_at:string};
  summary:{total_events:number;previous_events:number;event_change_percent:number|null;critical_events:number;critical_change_percent:number|null;open_events:number;resolved_events:number;resolution_rate:number;average_acknowledge_seconds:number|null;average_resolution_seconds:number|null;average_confidence:number|null;incidents:number;overdue_incidents:number;reporting_cameras:number};
- trend:Trend[];event_types:EventType[];severities:NamedMetric[];statuses:NamedMetric[];
+ trend:ReportTrend[];response_metrics?:ResponseMetrics|null;event_types:EventType[];severities:NamedMetric[];statuses:NamedMetric[];
  sites:Site[];cameras:RiskCamera[];heatmap:HeatCell[];recent_events:RecentEvent[];
  filters:{sites:Array<{code:string;name:string}>};generated_at:string;
 };
@@ -52,9 +55,10 @@ function Kpi({icon,label,value,detail,tone='green',delta,inverse}:{icon:ReactNod
 
 export default function ReportsAnalytics(){
  const[data,setData]=useState<ReportData|null>(null),[period,setPeriod]=useState<Period>('30d'),[site,setSite]=useState(''),[loading,setLoading]=useState(true),[exporting,setExporting]=useState(false),[error,setError]=useState('');
- const load=useCallback(async()=>{setLoading(true);setError('');const query=new URLSearchParams({period});if(site)query.set('site',site);try{const response=await fetch(API_BASE+'/api/reports/overview?'+query,{headers:headers()});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(payload));setData(payload as ReportData);}catch(reason){setError(reason instanceof Error?reason.message:'Không thể tải báo cáo.');}finally{setLoading(false);}},[period,site]);
- useEffect(()=>{void load();},[load]);
- async function exportReport(){setExporting(true);setError('');const query=new URLSearchParams({period});if(site)query.set('site',site);try{const response=await fetch(API_BASE+'/api/reports/export?'+query,{headers:headers()});if(!response.ok)throw new Error(apiError(await response.json().catch(()=>null)));const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='bao-cao-an-toan-'+period+'.csv';link.click();URL.revokeObjectURL(url);}catch(reason){setError(reason instanceof Error?reason.message:'Không thể xuất báo cáo.');}finally{setExporting(false);}}
+ const request=useRef<AbortController|null>(null);
+ const load=useCallback(async()=>{request.current?.abort();const controller=new AbortController();request.current=controller;setLoading(true);setError('');const query=new URLSearchParams({period});if(site)query.set('site',site);try{const response=await authenticatedFetch(API_BASE+'/api/reports/overview?'+query,{headers:headers(),signal:controller.signal});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(payload));if(!controller.signal.aborted)setData(payload as ReportData);}catch(reason){if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:'Không thể tải báo cáo.');}finally{if(!controller.signal.aborted)setLoading(false);}},[period,site]);
+ useEffect(()=>{void load();return()=>request.current?.abort();},[load]);
+ async function exportReport(){setExporting(true);setError('');const query=new URLSearchParams({period});if(site)query.set('site',site);try{const response=await authenticatedFetch(API_BASE+'/api/reports/export?'+query,{headers:headers()});if(!response.ok)throw new Error(apiError(await response.json().catch(()=>null)));const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='bao-cao-an-toan-'+period+'.csv';link.click();URL.revokeObjectURL(url);}catch(reason){setError(reason instanceof Error?reason.message:'Không thể xuất báo cáo.');}finally{setExporting(false);}}
  if(!data&&loading)return <div className={styles.loading}><LoaderCircle/><strong>Đang tổng hợp dữ liệu an toàn</strong><span>Phân tích sự kiện, sự cố và hiệu suất xử lý...</span></div>;
  if(!data)return <div className={styles.loading}><AlertTriangle/><strong>Không thể mở báo cáo</strong><span>{error}</span><button onClick={()=>void load()}><RefreshCw/>Thử lại</button></div>;
  const s=data.summary;
@@ -62,6 +66,7 @@ export default function ReportsAnalytics(){
   <header className={styles.heading}><div><span className={styles.eyebrow}><BarChart3/> SAFETY INTELLIGENCE</span><h1>Báo cáo & thống kê</h1><p>Đo lường xu hướng rủi ro, hiệu quả phản ứng và các điểm nóng cần ưu tiên.</p></div><div className={styles.actions}><label><MapPin/><select value={site} onChange={e=>setSite(e.target.value)}><option value="">Tất cả cơ sở</option>{data.filters.sites.map(x=><option key={x.code} value={x.code}>{x.name}</option>)}</select><ChevronDown/></label><button onClick={()=>void load()} disabled={loading} title="Làm mới"><RefreshCw className={loading?styles.spin:''}/></button><button className={styles.export} onClick={()=>void exportReport()} disabled={exporting}>{exporting?<LoaderCircle className={styles.spin}/>:<Download/>}Xuất CSV</button></div></header>
   <section className={styles.periodBar}><div className={styles.periods}>{PERIODS.map(item=><button key={item.value} className={period===item.value?styles.activePeriod:''} onClick={()=>setPeriod(item.value)}>{item.label}</button>)}</div><span><CalendarDays/> {fullTime(data.period.start_at)} — {fullTime(data.period.end_at)}</span><em><i/>Dữ liệu cập nhật {fullTime(data.generated_at)}</em></section>
   {error&&<div className={styles.error}><AlertTriangle/><span>{error}</span><button onClick={()=>setError('')}><X/></button></div>}
+  {loading&&<p className={styles.updating} role="status">Đang cập nhật theo bộ lọc đã chọn…</p>}
   <section className={styles.kpis}>
    <Kpi icon={<Siren/>} label="Tổng cảnh báo" value={number(s.total_events)} detail={number(s.open_events)+' cảnh báo đang mở'} delta={s.event_change_percent} inverse tone="red"/>
    <Kpi icon={<AlertTriangle/>} label="Mức nghiêm trọng" value={number(s.critical_events)} detail="Cần ưu tiên điều tra" delta={s.critical_change_percent} inverse tone="orange"/>
@@ -70,7 +75,8 @@ export default function ReportsAnalytics(){
    <Kpi icon={<FileWarning/>} label="Sự cố phát sinh" value={number(s.incidents)} detail={number(s.overdue_incidents)+' hồ sơ quá hạn'} tone="violet"/>
    <Kpi icon={<Gauge/>} label="Độ tin cậy AI" value={percent(s.average_confidence)} detail={number(s.reporting_cameras)+' camera có dữ liệu'} tone="cyan"/>
   </section>
-  <div className={styles.primaryGrid}><TrendChart rows={data.trend} period={period}/><SeverityPanel severities={data.severities} statuses={data.statuses} total={s.total_events}/></div>
+  <div className={styles.primaryGrid}><ReportTrendChart key={data.generated_at} rows={data.trend}/><SeverityPanel severities={data.severities} statuses={data.statuses} total={s.total_events}/></div>
+  {data.response_metrics&&<ResponsePanel metrics={data.response_metrics}/>}
   <div className={styles.secondaryGrid}><EventTypes rows={data.event_types}/><Heatmap rows={data.heatmap}/></div>
   <SitePerformance rows={data.sites}/>
   <div className={styles.bottomGrid}><CameraRisks rows={data.cameras}/><RecentEvents rows={data.recent_events}/></div>
@@ -79,15 +85,22 @@ export default function ReportsAnalytics(){
 
 function PanelHeader({icon,title,subtitle,badge}:{icon:ReactNode;title:string;subtitle:string;badge?:string}){return <header className={styles.panelHead}><div><span>{icon}</span><p><strong>{title}</strong><small>{subtitle}</small></p></div>{badge&&<em>{badge}</em>}</header>;}
 
-function TrendChart({rows,period}:{rows:Trend[];period:Period}){
- const width=900,height=250,pad=22,max=Math.max(1,...rows.map(x=>x.total));
- const points=rows.map((item,i)=>({x:pad+i*(width-pad*2)/Math.max(rows.length-1,1),y:height-pad-item.total/max*(height-pad*2),...item}));
- const line=points.map((p,i)=>(i?'L':'M')+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' ');
- const area=line+(points.length?' L '+points.at(-1)!.x+' '+(height-pad)+' L '+points[0].x+' '+(height-pad)+' Z':'');
- const labels=rows.filter((_,i)=>i===0||i===rows.length-1||i%Math.max(1,Math.floor(rows.length/5))===0);
- const total=rows.reduce((a,x)=>a+x.total,0),critical=rows.reduce((a,x)=>a+x.critical,0),resolved=rows.reduce((a,x)=>a+x.resolved,0);
- return <section className={styles.panel+' '+styles.trend}><PanelHeader icon={<TrendingUp/>} title="Xu hướng cảnh báo" subtitle="Diễn biến số lượng phát hiện theo thời gian" badge={period==='365d'?'12 THÁNG':rows.length+' NGÀY'}/><div className={styles.legend}><span><i data-color="total"/>Tổng cảnh báo <b>{number(total)}</b></span><span><i data-color="critical"/>Nghiêm trọng <b>{number(critical)}</b></span><span><i data-color="resolved"/>Đã xử lý <b>{number(resolved)}</b></span></div><div className={styles.chartWrap}><svg viewBox={'0 0 '+width+' '+height} preserveAspectRatio="none" aria-label="Biểu đồ xu hướng cảnh báo">{[0,.25,.5,.75,1].map(n=><line key={n} x1={pad} x2={width-pad} y1={pad+n*(height-pad*2)} y2={pad+n*(height-pad*2)} className={styles.gridLine}/>)}
-  <defs><linearGradient id="reportArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#2f75ef" stopOpacity=".23"/><stop offset="1" stopColor="#2f75ef" stopOpacity=".01"/></linearGradient></defs><path d={area} fill="url(#reportArea)"/><path d={line} className={styles.line}/>{points.filter((_,i)=>rows.length<=30||i%Math.ceil(rows.length/30)===0).map(p=><circle key={p.day} cx={p.x} cy={p.y} r="3" className={styles.point}><title>{p.day}: {p.total} cảnh báo</title></circle>)}</svg><div className={styles.xLabels}>{labels.map(x=><span key={x.day}>{new Date(x.day+'T00:00:00').toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit'})}</span>)}</div>{!total&&<div className={styles.chartEmpty}><Activity/><strong>Chưa có dữ liệu trong kỳ</strong><small>Các cảnh báo mới sẽ tự động xuất hiện trên biểu đồ.</small></div>}</div></section>;
+function ResponsePanel({metrics}:{metrics:ResponseMetrics}){
+ const rate=metrics.acknowledge_samples?metrics.acknowledged_within_24h/metrics.acknowledge_samples*100:null;
+ return <section className={styles.panel} aria-label="Hiệu quả tiếp nhận cảnh báo">
+  <PanelHeader icon={<Clock3/>} title="Hiệu quả tiếp nhận cảnh báo" subtitle="Cảnh báo được phát hiện trong khoảng thời gian và cơ sở đã chọn"/>
+  <div className={styles.responseSummary}>
+   <article><span>Chờ xác nhận</span><strong>{number(metrics.pending_events)}</strong><small>Chỉ cảnh báo mới</small></article>
+   <article><span>Đã xác nhận</span><strong>{number(metrics.acknowledged_events)}</strong><small>Đã rời hàng đợi tiếp nhận</small></article>
+   <article data-risk={metrics.overdue_events>0}><span>Quá hạn xác nhận</span><strong>{number(metrics.overdue_events)}</strong><small>Quá 24 giờ, chưa xác nhận</small></article>
+   <article><span>Xác nhận trong 24 giờ</span><strong>{rate===null?'—':rate.toLocaleString('vi-VN',{maximumFractionDigits:1})+'%'}</strong><small>{number(metrics.acknowledged_within_24h)} / {number(metrics.acknowledge_samples)} lượt đã xác nhận</small></article>
+  </div>
+  <div className={styles.responseTable}><table><caption>Thời gian từ lúc phát hiện đến khi phản hồi</caption><thead><tr><th scope="col">Thao tác</th><th scope="col">Số mẫu</th><th scope="col">P50</th><th scope="col">P95</th><th scope="col">P99</th></tr></thead><tbody>
+   <tr><th scope="row">Xác nhận</th><td>{number(metrics.acknowledge_samples)}</td><td>{duration(metrics.acknowledge_p50_seconds)}</td><td>{duration(metrics.acknowledge_p95_seconds)}</td><td>{duration(metrics.acknowledge_p99_seconds)}</td></tr>
+   <tr><th scope="row">Hoàn tất xử lý</th><td>{number(metrics.resolution_samples)}</td><td>{duration(metrics.resolution_p50_seconds)}</td><td>{duration(metrics.resolution_p95_seconds)}</td><td>{duration(metrics.resolution_p99_seconds)}</td></tr>
+  </tbody></table></div>
+  <p className={styles.responseNote}>P50 là trung vị; 95% số mẫu có thời gian không vượt P95, 99% không vượt P99. Chỉ tính mẫu có mốc thời gian hợp lệ. Tỷ lệ 24 giờ tính trên lượt đã xác nhận; các cảnh báo đang chờ được thống kê riêng ở trên.</p>
+ </section>;
 }
 
 function SeverityPanel({severities,statuses,total}:{severities:NamedMetric[];statuses:NamedMetric[];total:number}){
@@ -104,7 +117,7 @@ function EventTypes({rows}:{rows:EventType[]}){
 function Heatmap({rows}:{rows:HeatCell[]}){
  const map=new Map(rows.map(x=>[x.weekday+'-'+x.hour,x.total])),max=Math.max(1,...rows.map(x=>x.total));
  const days=['T2','T3','T4','T5','T6','T7','CN'],hours=Array.from({length:24},(_,i)=>i);
- return <section className={styles.panel}><PanelHeader icon={<CalendarDays/>} title="Bản đồ thời gian rủi ro" subtitle="Khung giờ thường phát sinh cảnh báo" badge="24 × 7"/><div className={styles.heatWrap}><div className={styles.hourLabels}>{hours.map(h=><span key={h}>{h%3===0?h.toString().padStart(2,'0'):''}</span>)}</div>{days.map((day,d)=><div className={styles.heatRow} key={day}><strong>{day}</strong><div>{hours.map(h=>{const value=map.get((d+1)+'-'+h)||0;return <i key={h} style={{'--alpha':String(value?Math.max(.16,value/max):.04)} as CSSProperties}><span>{day} {h}:00 · {value} cảnh báo</span></i>})}</div></div>)}<footer><span>Ít</span>{[.04,.16,.35,.6,1].map(n=><i key={n} style={{'--alpha':n} as CSSProperties}/>)}<span>Nhiều</span></footer>{!rows.length&&<p className={styles.heatEmpty}>Chưa có dữ liệu thời gian trong kỳ đã chọn.</p>}</div></section>;
+ return <section className={styles.panel}><PanelHeader icon={<CalendarDays/>} title="Bản đồ thời gian rủi ro" subtitle="Khung giờ thường phát sinh cảnh báo (UTC)" badge="24 × 7"/><div className={styles.heatWrap}><div className={styles.hourLabels}>{hours.map(h=><span key={h}>{h%3===0?h.toString().padStart(2,'0'):''}</span>)}</div>{days.map((day,d)=><div className={styles.heatRow} key={day}><strong>{day}</strong><div>{hours.map(h=>{const value=map.get((d+1)+'-'+h)||0;return <i key={h} style={{'--alpha':String(value?Math.max(.16,value/max):.04)} as CSSProperties}><span>{day} {h}:00 · {value} cảnh báo</span></i>})}</div></div>)}<footer><span>Ít</span>{[.04,.16,.35,.6,1].map(n=><i key={n} style={{'--alpha':n} as CSSProperties}/>)}<span>Nhiều</span></footer>{!rows.length&&<p className={styles.heatEmpty}>Chưa có dữ liệu thời gian trong kỳ đã chọn.</p>}</div></section>;
 }
 
 function SitePerformance({rows}:{rows:Site[]}){

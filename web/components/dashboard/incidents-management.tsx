@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity, AlertTriangle, ArrowRight, CalendarClock, Check, CheckCircle2,
   ChevronDown, ChevronRight, CircleDot, ClipboardCheck, Columns3, Download,
@@ -159,7 +161,7 @@ export default function IncidentsManagement() {
     if (!quiet) setLoading(true);
     setError('');
     try {
-      const response = await fetch(API_BASE + '/api/incidents?' + query, { headers: headers() });
+      const response = await authenticatedFetch(API_BASE + '/api/incidents?' + query, { headers: headers() });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(apiError(payload));
       const next = payload as IncidentResponse;
@@ -177,7 +179,7 @@ export default function IncidentsManagement() {
     if (!id) { setDetail(null); return; }
     setDetailLoading(true);
     try {
-      const response = await fetch(API_BASE + '/api/incidents/' + id, { headers: headers() });
+      const response = await authenticatedFetch(API_BASE + '/api/incidents/' + id, { headers: headers() });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(apiError(payload));
       setDetail(payload as IncidentDetail);
@@ -226,7 +228,7 @@ export default function IncidentsManagement() {
         } : {}),
       };
       const path = editorMode === 'create' ? '/api/incidents' : '/api/incidents/' + selectedId + '/update';
-      const response = await fetch(API_BASE + path, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+      const response = await authenticatedFetch(API_BASE + path, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(apiError(payload));
       setSelectedId(payload.incident.id); setDetail(payload.incident); setEditorMode(null);
@@ -240,7 +242,7 @@ export default function IncidentsManagement() {
     if (!selectedId || !statusModal) return;
     setBusy(true);
     try {
-      const response = await fetch(API_BASE + '/api/incidents/' + selectedId + '/status', {
+      const response = await authenticatedFetch(API_BASE + '/api/incidents/' + selectedId + '/status', {
         method: 'POST', headers: headers(),
         body: JSON.stringify({ status: statusModal, note: statusNote.trim() || null }),
       });
@@ -257,7 +259,7 @@ export default function IncidentsManagement() {
     if (!selectedId || !comment.trim()) return;
     setBusy(true);
     try {
-      const response = await fetch(API_BASE + '/api/incidents/' + selectedId + '/comments', {
+      const response = await authenticatedFetch(API_BASE + '/api/incidents/' + selectedId + '/comments', {
         method: 'POST', headers: headers(), body: JSON.stringify({ body: comment.trim() }),
       });
       const payload = await response.json().catch(() => null);

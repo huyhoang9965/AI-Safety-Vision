@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -62,8 +64,8 @@ export default function DashboardOverview() {
       : undefined;
     try {
       const [healthResponse, modelsResponse] = await Promise.all([
-        fetch(base + '/api/health'),
-        fetch(base + '/api/models', { headers }),
+        authenticatedFetch(base + '/api/health'),
+        authenticatedFetch(base + '/api/models', { headers }),
       ]);
       if (!healthResponse.ok || !modelsResponse.ok) throw new Error('Backend unavailable');
       setHealth(await healthResponse.json() as HealthPayload);

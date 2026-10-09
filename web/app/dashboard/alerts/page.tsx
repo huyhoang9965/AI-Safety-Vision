@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import AlertsManagement from '@/components/dashboard/alerts-management';
 
 export const metadata: Metadata = {
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function AlertsPage() {
-  return <AlertsManagement />;
+  return <Suspense fallback={<p>Đang tải cảnh báo...</p>}><AlertsManagement /></Suspense>;
 }

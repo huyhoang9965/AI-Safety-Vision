@@ -11,8 +11,12 @@ class ChatStatusResponse(BaseModel):
     available: bool
     provider: str
     model: str
-    mode: Literal["openai", "local"]
+    mode: Literal["openai", "openrouter", "local"]
     suggested_prompts: list[str]
+    llm_configured: bool = False
+    speech_available: bool = False
+    speech_provider: str = "OpenRouter"
+    speech_model: str | None = None
 
 
 class ConversationItem(BaseModel):
@@ -49,6 +53,11 @@ class ChatSendRequest(BaseModel):
     conversation_id: UUID | None = None
 
 
+class ChatSpeechRequest(BaseModel):
+    message_id: UUID | None = None
+    voice: Literal["female", "male"] = "female"
+
+
 class ToolCallInfo(BaseModel):
     name: str
     label: str
@@ -61,7 +70,7 @@ class ChatSendResponse(BaseModel):
     user_message: ChatMessage
     assistant_message: ChatMessage
     tool_calls: list[ToolCallInfo]
-    mode: Literal["openai", "local"]
+    mode: Literal["openai", "openrouter", "local"]
 
 
 class FeedbackRequest(BaseModel):

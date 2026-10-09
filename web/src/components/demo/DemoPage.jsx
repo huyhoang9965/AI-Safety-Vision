@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity,
   ArrowLeft,
@@ -23,18 +25,13 @@ import {
   XCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { defaultAppPath, readAuthSession, restoreAuthSession } from '@/lib/auth';
+import { CAMERA_DEMO_PRESETS as CAMERA_PRESETS } from '@/lib/demo-cameras';
+import CameraVideoPlayer from '@/components/dashboard/camera-video-player';
+import DetectionLegend from '@/components/dashboard/detection-legend';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
-
-const CAMERA_PRESETS = [
-  { key: 'CAM-01', filenames: ['0_tr10.mp4', '0_tr11.mp4'], location: 'Toàn cảnh xưởng', note: 'Lối đi sản xuất', roi: { left: 58, top: 12, width: 31, height: 73 } },
-  { key: 'CAM-02', filenames: ['3_tr11.mp4', '3_tr14.mp4'], location: 'Khu vực xe nâng', note: 'Bãi trung chuyển', roi: { left: 8, top: 14, width: 62, height: 72 } },
-  { key: 'CAM-03', filenames: ['2_tr123.mp4', '2_te12.mp4'], location: 'Tủ điện máy ép', note: 'Khu kỹ thuật', roi: { left: 4, top: 12, width: 49, height: 76 } },
-  { key: 'CAM-04', filenames: ['1_tr25.mp4', '1_tr27.mp4'], location: 'Máy gia công', note: 'Khu vực hạn chế', roi: { left: 2, top: 16, width: 57, height: 76 } },
-  { key: 'CAM-05', filenames: ['1_tr24.mp4', '1_tr60.mp4'], location: 'Lối đi chính', note: 'Giao cắt nội bộ', roi: { left: 52, top: 13, width: 39, height: 75 } },
-];
 
 const TOTAL_PIPELINE_JOBS = CAMERA_PRESETS.reduce((total, camera) => total + camera.filenames.length * 2, 0);
 
@@ -46,10 +43,12 @@ const UNSAFE_BEHAVIORS = new Set([
 ]);
 
 const LABELS_VI = {
-  'Safe Walkway Violation': 'Đi vào khu vực nguy hiểm',
+  'Suspected no helmet': 'Nghi ngờ không đội mũ bảo hộ',
+  'Suspected no vest': 'Nghi ngờ không mặc áo bảo hộ',
+  'Safe Walkway Violation': 'Đi ngoài lối đi an toàn',
   'Unauthorized Intervention': 'Can thiệp trái phép',
   'Opened Panel Cover': 'Nắp tủ điện đang mở',
-  'Carrying Overload with Forklift': 'Xe nâng chở quá tải',
+  'Carrying Overload with Forklift': 'Nghi ngờ xe nâng chở quá tải',
   'Authorized Intervention': 'Can thiệp đã được phép',
   'Closed Panel Cover': 'Nắp tủ điện đã đóng',
   'Safe Carrying': 'Vận chuyển an toàn',
@@ -94,13 +93,12 @@ function formatNow() {
   };
 }
 
-function buildBehaviorAlert(camera, result) {
-  if (!UNSAFE_BEHAVIORS.has(result.prediction)) return null;
+function buildBehaviorAlerts(camera, result) {
+  if (!UNSAFE_BEHAVIORS.has(result.prediction)) return [];
   const severity = severityFor(result.prediction);
   const occurred = formatNow();
-  const evidence = result?.metrics?.evidence_events?.find((event) => event.class_name === result.prediction);
-  return {
-    id: `${camera.key}-${camera.video.id}-videomae-${result.prediction}`,
+  return (result?.metrics?.evidence_events || []).filter(event => event.verified === true && event.class_name === result.prediction).map((evidence, index) => ({
+    id: result.event_ids?.[index] || `${camera.key}-${camera.video.id}-videomae-${result.prediction}-${evidence.track_id || 'clip'}`,
     camera: camera.key,
     location: camera.location,
     title: translateLabel(result.prediction),
@@ -114,12 +112,20 @@ function buildBehaviorAlert(camera, result) {
     status: 'Mới',
     videoId: camera.video.id,
     image: apiUrl(evidence?.image || `/api/videos/${camera.video.id}/thumbnail`),
-    eventId: result.event_ids?.[0] || null,
-    savedToDashboard: Boolean(result.persisted && result.event_ids?.[0]),
+    fullFrameImage: apiUrl(evidence.full_frame_image),
+    eventId: result.event_ids?.[index] || null,
+    savedToDashboard: Boolean(result.persisted && result.event_ids?.[index]),
+    isNew: !result.reused && (!Array.isArray(result.new_event_ids) || result.new_event_ids.includes(result.event_ids?.[index])),
     evidenceVideo: '',
-    roi: camera.roi,
-    detail: 'VideoMAE phân tích chuỗi khung hình và nhận diện hành vi có nguy cơ mất an toàn.',
-  };
+    roi: null,
+    timestampSeconds: evidence.timestamp_seconds,
+    frameIndex: evidence.frame_index,
+    detail: result.prediction === 'Safe Walkway Violation'
+      ? 'Phát hiện người di chuyển ngoài lối đi sơn xanh qua nhiều khung hình, dựa trên vị trí chân. Không đồng nghĩa với xâm nhập khu vực cấm.'
+      : result.prediction === 'Carrying Overload with Forklift'
+        ? 'VideoMAE nhận diện nguy cơ chở hàng cao; khung đối tượng được định vị và theo dõi trong video. Cần xác minh tải trọng thực tế trước khi kết luận quá tải.'
+        : 'VideoMAE phân loại hành vi trên toàn clip. Cần xem ảnh và video để xác minh; mô hình này không tự xác định vị trí đối tượng hoặc quyền can thiệp.',
+  }));
 }
 
 function buildPpeAlerts(camera, result) {
@@ -129,7 +135,7 @@ function buildPpeAlerts(camera, result) {
     'Suspected no vest': 'Nghi ngờ không mặc áo bảo hộ',
   };
   return (result?.metrics?.evidence_events || []).filter((event) => labels[event.class_name] && event.image).map((event, index) => ({
-    id: `${camera.key}-${camera.video.id}-person-${event.track_id}-${event.class_name}`,
+    id: result.event_ids?.[index] || `${camera.key}-${camera.video.id}-person-${event.track_id}-${event.class_name}`,
     camera: camera.key,
     location: camera.location,
     title: labels[event.class_name],
@@ -149,6 +155,7 @@ function buildPpeAlerts(camera, result) {
     fullFrameImage: apiUrl(`/api/videos/${camera.video.id}/thumbnail?frame_index=${Math.max(0, Number(event.frame_index) || 0)}`),
     eventId: result.event_ids?.[index] || null,
     savedToDashboard: Boolean(result.persisted && result.event_ids?.[index]),
+    isNew: !result.reused && (!Array.isArray(result.new_event_ids) || result.new_event_ids.includes(result.event_ids?.[index])),
     evidenceVideo: '',
     processedVideo: apiUrl(result.output_video),
     roi: null,
@@ -176,6 +183,7 @@ export default function DemoPage() {
   const [backendOnline, setBackendOnline] = useState(false);
   const [databaseStatus, setDatabaseStatus] = useState('unknown');
   const [jobs, setJobs] = useState({});
+  const [overlayResults, setOverlayResults] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [historyHydrated, setHistoryHydrated] = useState(false);
   const [syncWarning, setSyncWarning] = useState('');
@@ -185,13 +193,17 @@ export default function DemoPage() {
   const [notificationPermission, setNotificationPermission] = useState('default');
   const autoStarted = useRef(false);
   const publishedAlertIds = useRef(new Set());
+  const historyStorageKey = useRef('ai-safety-alert-history-grounded-v2');
 
   useEffect(() => {
     try {
       const storedSession = readAuthSession();
-      if (storedSession) setDashboardHref(defaultAppPath(storedSession.session.user) || '');
+      if (storedSession) {
+        setDashboardHref(defaultAppPath(storedSession.session.user) || '');
+        historyStorageKey.current = `ai-safety-alert-history-grounded-v2:${storedSession.session.user.id}`;
+      }
 
-      const cached = window.sessionStorage.getItem('ai-safety-alert-history-person-v1');
+      const cached = window.sessionStorage.getItem(historyStorageKey.current);
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed)) {
@@ -211,7 +223,7 @@ export default function DemoPage() {
   useEffect(() => {
     if (!historyHydrated) return;
     try {
-      window.sessionStorage.setItem('ai-safety-alert-history-person-v1', JSON.stringify(alerts));
+      window.sessionStorage.setItem(historyStorageKey.current, JSON.stringify(alerts.slice(0, 200)));
     } catch {
       // Keep the live dashboard operational when storage is unavailable.
     }
@@ -230,9 +242,9 @@ export default function DemoPage() {
         setDashboardHref(defaultAppPath(session.user) || '');
         const headers = { Authorization: `Bearer ${session.access_token}` };
         const [videoResponse, modelResponse, healthResponse] = await Promise.all([
-          fetch(`${API_BASE}/api/videos/test`, { headers, signal: controller.signal }),
-          fetch(`${API_BASE}/api/models`, { headers, signal: controller.signal }),
-          fetch(`${API_BASE}/api/health`, { signal: controller.signal }),
+          authenticatedFetch(`${API_BASE}/api/videos/test`, { headers, signal: controller.signal }),
+          authenticatedFetch(`${API_BASE}/api/models`, { headers, signal: controller.signal }),
+          authenticatedFetch(`${API_BASE}/api/health`, { signal: controller.signal }),
         ]);
         setBackendOnline(healthResponse.ok);
         if (!videoResponse.ok) {
@@ -269,6 +281,7 @@ export default function DemoPage() {
     const connected = new Set(models.filter((model) => model.connected).map((model) => model.name));
     if (autoStarted.current || readyCameras.length !== CAMERA_PRESETS.length || !connected.has('RF-DETR') || !connected.has('VideoMAE')) return;
     autoStarted.current = true;
+    const controller = new AbortController();
 
     const setJob = (camera, model, status, message = '') => {
       setJobs((current) => ({ ...current, [`${camera.key}:${camera.video.id}:${model}`]: { status, message } }));
@@ -279,11 +292,12 @@ export default function DemoPage() {
       const alreadyShown = publishedAlertIds.current.has(alert.id);
       if (alreadyShown && !alert.savedToDashboard) return;
       publishedAlertIds.current.add(alert.id);
-      setAlerts((current) => alreadyShown
-        ? current.map((item) => item.id === alert.id ? { ...item, ...alert } : item)
+      setAlerts((current) => current.some(item => item.id === alert.id)
+        ? current.map((item) => item.id === alert.id ? { ...item, ...alert, status: item.status } : item)
         : [alert, ...current]);
       if (alreadyShown) return;
       setSelectedAlertId((current) => current || alert.id);
+      if (!alert.isNew) return;
       setToast(alert);
       window.setTimeout(() => setToast((current) => current?.id === alert.id ? null : current), 6500);
       if ('Notification' in window && window.Notification.permission === 'granted') {
@@ -294,21 +308,28 @@ export default function DemoPage() {
     const infer = async (camera, model) => {
       setJob(camera, model, 'running');
       try {
-        const response = await fetch(`${API_BASE}/api/inference`, {
+        const response = await authenticatedFetch(`${API_BASE}/api/inference`, {
           method: 'POST',
           headers: authHeaders(true),
           body: JSON.stringify({ video_id: Number(camera.video.id), model_name: model, camera_code: camera.key }),
+          signal: controller.signal,
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(getErrorMessage(payload));
+        setOverlayResults(current => ({ ...current, [`${camera.key}:${camera.video.id}:${model}`]: payload.metrics }));
         setJob(camera, model, payload.persisted ? 'done' : 'error', payload.persisted ? '' : 'Kết quả AI chưa lưu được vào Dashboard');
         if (!payload.persisted) setSyncWarning('Một số kết quả AI chưa lưu được vào Dashboard. Hãy kiểm tra backend và tải lại trang Demo để phân tích lại.');
-        if (model === 'VideoMAE') {
-          publishAlert(buildBehaviorAlert(camera, payload));
-        } else {
-          buildPpeAlerts(camera, payload).forEach(publishAlert);
-        }
+        const fresh = model === 'VideoMAE' ? buildBehaviorAlerts(camera,payload) : buildPpeAlerts(camera,payload);
+        const freshIds = new Set(fresh.map(alert => alert.id));
+        const type = model === 'VideoMAE' ? 'behavior' : 'ppe';
+        // Session history must follow the completed analysis for this exact
+        // camera/clip/model. An obsolete warning must not survive a reload.
+        setAlerts(current => current.filter(alert => alert.camera !== camera.key
+          || Number(alert.videoId) !== Number(camera.video.id) || alert.type !== type
+          || freshIds.has(alert.id)));
+        fresh.forEach(publishAlert);
       } catch (error) {
+        if (controller.signal.aborted) return;
         const message = error instanceof Error ? error.message : 'Không thể phân tích video.';
         setJob(camera, model, 'error', message);
         setSyncWarning(`Không thể hoàn tất phân tích ${model} cho ${camera.key}: ${message}`);
@@ -319,24 +340,22 @@ export default function DemoPage() {
       const clips = readyCameras.flatMap((camera) => camera.clips.map((video, clipIndex) => ({ ...camera, video, clipIndex })));
       const primaryClips = readyCameras.map((camera) => ({ ...camera, video: camera.clips[0], clipIndex: 0 }));
       const secondaryClips = clips.filter((camera) => camera.clipIndex > 0);
-      const ppeDemoClip = clips.find((camera) => camera.video.filename === '1_tr25.mp4');
+      const ppeDemoClip = clips.find((camera) => camera.video.filename === '1_tr25.mp4') || primaryClips.find(camera => camera.key === 'CAM-04');
 
-      // Run one representative PPE clip first so the live dashboard can publish
-      // a spatial violation alert without waiting for every behavior job.
-      if (ppeDemoClip) await infer(ppeDemoClip, 'RF-DETR');
-
-      // Give every camera a first result before processing its secondary clip.
-      // This keeps the 4-core CPU responsive and makes progress visible sooner.
-      for (const camera of primaryClips) {
+      // Publish behavior results for every camera before the slower PPE pass.
+      for (const camera of [...primaryClips, ...secondaryClips]) {
+        if (controller.signal.aborted) return;
         await infer(camera, 'VideoMAE');
-        if (camera.video.id !== ppeDemoClip?.video.id) await infer(camera, 'RF-DETR');
       }
-      for (const camera of secondaryClips) {
-        await infer(camera, 'VideoMAE');
+      if (controller.signal.aborted) return;
+      if (ppeDemoClip) await infer(ppeDemoClip, 'RF-DETR');
+      for (const camera of clips) {
+        if (controller.signal.aborted) return;
         if (camera.video.id !== ppeDemoClip?.video.id) await infer(camera, 'RF-DETR');
       }
     };
     runAutomaticPipeline();
+    return () => controller.abort();
   }, [models, videos]);
 
   const cameras = CAMERA_PRESETS.map((preset) => ({
@@ -346,6 +365,7 @@ export default function DemoPage() {
   const selectedCamera = cameras.find((camera) => camera.key === activeCamera) || cameras[0];
   const selectedClipIndex = activeClipIndexes[activeCamera] || 0;
   const selectedVideo = selectedCamera?.clips[selectedClipIndex] || selectedCamera?.clips[0];
+  const nextVideo = selectedCamera?.clips[(selectedClipIndex + 1) % selectedCamera.clips.length];
   const selectedAlert = alerts.find((alert) => alert.id === selectedAlertId) || alerts[0];
   const unsyncedCount = alerts.filter((alert) => !alert.savedToDashboard).length;
   const jobValues = Object.values(jobs);
@@ -353,11 +373,13 @@ export default function DemoPage() {
   const totalJobs = TOTAL_PIPELINE_JOBS;
   const activeCameraAlerts = alerts.filter((alert) => alert.camera === activeCamera);
   const activePpeAlert = activeCameraAlerts.find((alert) => alert.type === 'ppe' && alert.videoId === selectedVideo?.id && alert.processedVideo);
-  const activeBehaviorAlert = activePpeAlert ? null : activeCameraAlerts.find((alert) => alert.type === 'behavior' && alert.videoId === selectedVideo?.id && alert.roi);
-  const rawCameraVideoSource = activePpeAlert?.processedVideo || apiUrl(selectedVideo?.stream_url);
-  const cameraVideoSource = rawCameraVideoSource
+  const activeBehaviorAlert = activeCameraAlerts.find((alert) => alert.type === 'behavior' && alert.videoId === selectedVideo?.id);
+  const activeResults = useMemo(() => ['VideoMAE', 'RF-DETR'].map(model => overlayResults[`${activeCamera}:${selectedVideo?.id}:${model}`]).filter(Boolean), [overlayResults, activeCamera, selectedVideo?.id]);
+  const overlayFrames = useMemo(() => activeResults.flatMap(result => result.overlay_frames || []), [activeResults]);
+  const rawCameraVideoSource = apiUrl(selectedVideo?.stream_url);
+  const cameraVideoSource = rawCameraVideoSource && streamAttempt
     ? `${rawCameraVideoSource}${rawCameraVideoSource.includes('?') ? '&' : '?'}attempt=${streamAttempt}`
-    : '';
+    : rawCameraVideoSource;
 
   useEffect(() => {
     setVideoError('');
@@ -395,7 +417,7 @@ export default function DemoPage() {
     try {
       const session = await restoreAuthSession();
       if (!session) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
-      const response = await fetch(`${API_BASE}/api/alerts/${alert.eventId}/${action}`, {
+      const response = await authenticatedFetch(`${API_BASE}/api/alerts/${alert.eventId}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ note: action === 'dismiss' ? 'Đánh dấu báo sai từ trang Demo' : null }),
@@ -458,7 +480,7 @@ export default function DemoPage() {
             </div>
             <div className="camera-stage">
               {selectedVideo && !videoError
-                ? <video key={`${selectedVideo.id}-${cameraVideoSource}`} src={cameraVideoSource} controls autoPlay muted playsInline preload="metadata" onCanPlay={() => { setVideoReady(true); setVideoError(''); }} onError={() => setVideoError('Không thể tải luồng video kiểm thử.')} onEnded={advanceCameraClip} />
+                ? <CameraVideoPlayer key={`${selectedVideo.id}-${cameraVideoSource}`} src={cameraVideoSource} frames={overlayFrames} width={selectedVideo.width || activeResults[0]?.frame_width || 1920} height={selectedVideo.height || activeResults[0]?.frame_height || 1080} label={translateLabel} onReady={() => { setVideoReady(true); setVideoError(''); }} onError={() => setVideoError('Không thể tải luồng video kiểm thử.')} onEnded={advanceCameraClip} />
                 : <div className={`camera-placeholder ${catalogError || videoError ? 'error' : ''}`}>
                     {catalogLoading
                       ? <><LoaderCircle className="spin" size={27} /><span><strong>Đang kết nối camera</strong><small>Đang xác thực và tải nguồn video...</small></span></>
@@ -466,9 +488,9 @@ export default function DemoPage() {
                   </div>}
               {selectedVideo && !videoError && <div className="camera-live"><i /> TRỰC TIẾP</div>}
               {selectedVideo && !videoError && <div className="camera-ai"><Activity className={cameraState(selectedCamera).includes('Đang') ? 'pulse' : ''} size={14} />{videoReady ? cameraState(selectedCamera) : 'Đang mở luồng'}</div>}
-              {activeBehaviorAlert && <div className="violation-roi" style={{ left: `${activeBehaviorAlert.roi.left}%`, top: `${activeBehaviorAlert.roi.top}%`, width: `${activeBehaviorAlert.roi.width}%`, height: `${activeBehaviorAlert.roi.height}%` }}><span>{activeBehaviorAlert.title}</span></div>}
-              <div className="camera-caption"><span><MapPin size={14} />{selectedCamera?.note} · Clip {selectedClipIndex + 1}/{selectedCamera?.clips.length || 1}</span><span>{activePpeAlert?.title || activeBehaviorAlert?.title || 'AI đang quan sát khu vực'}</span></div>
             </div>
+            <div className="camera-caption"><span><MapPin size={14} />{selectedCamera?.note} · Clip {selectedClipIndex + 1}/{selectedCamera?.clips.length || 1}</span><span>{[activePpeAlert?.title, activeBehaviorAlert?.title].filter(Boolean).join(' · ') || 'AI đang quan sát khu vực'}</span></div>
+            <DetectionLegend />
             <div className="camera-tabs" role="tablist">
               {cameras.map((camera) => (
                 <button type="button" role="tab" aria-selected={activeCamera === camera.key} className={activeCamera === camera.key ? 'active' : ''} key={camera.key} onClick={() => setActiveCamera(camera.key)} disabled={!camera.clips.length}>
@@ -476,10 +498,14 @@ export default function DemoPage() {
                 </button>
               ))}
             </div>
+            {nextVideo && nextVideo.id !== selectedVideo?.id && <video src={apiUrl(nextVideo.stream_url)} crossOrigin="anonymous" preload="auto" muted playsInline aria-hidden="true" style={{ display: 'none' }} />}
+            <label className="demo-scenario-picker"><span>Tình huống</span><select aria-label="Chọn tình huống camera" value={selectedClipIndex} onChange={event => setActiveClipIndexes(current => ({ ...current, [activeCamera]: Number(event.target.value) }))} disabled={!selectedCamera?.clips.length}>
+              {selectedCamera?.clips.map((clip, index) => <option key={clip.id} value={index}>{index + 1}. {selectedCamera.scenarioNames?.[index] || clip.labels.map(translateLabel).join(' · ')}</option>)}
+            </select></label>
             <div className="auto-pipeline">
               <div className="pipeline-title"><Activity size={16} /><span><strong>Phân tích tự động</strong><small>Không cần thao tác thủ công</small></span></div>
               <div className="pipeline-model"><HardHat size={16} /><span><strong>RF-DETR</strong><small>PPE · mũ bảo hộ</small></span><i className={models.find((model) => model.name === 'RF-DETR')?.connected ? 'ready' : ''} /></div>
-              <div className="pipeline-model"><Video size={16} /><span><strong>VideoMAE Stage 3</strong><small>Hành vi · vùng nguy hiểm</small></span><i className={models.find((model) => model.name === 'VideoMAE')?.connected ? 'ready' : ''} /></div>
+              <div className="pipeline-model"><Video size={16} /><span><strong>VideoMAE Stage 3</strong><small>Hành vi · kiểm tra lối đi</small></span><i className={models.find((model) => model.name === 'VideoMAE')?.connected ? 'ready' : ''} /></div>
               <div className="pipeline-progress"><span>{completedJobs < totalJobs ? 'Đang phân tích' : 'Đã hoàn tất'}</span><strong>{completedJobs}/{totalJobs}</strong><div><i style={{ width: `${(completedJobs / totalJobs) * 100}%` }} /></div><small>Không giới hạn số vi phạm phát hiện.</small></div>
             </div>
           </article>
@@ -530,7 +556,7 @@ export default function DemoPage() {
                 <div className="detail-heading"><div><span className={`severity ${selectedAlert.severity.tone}`}>{selectedAlert.severity.label}</span><h2>{selectedAlert.title}</h2><p>{selectedAlert.camera} · {selectedAlert.location}</p></div><span>{selectedAlert.status}</span></div>
                 <div className="detail-meta"><span><small>MÔ HÌNH</small>{selectedAlert.model}</span><span><small>ĐỘ TIN CẬY</small>{selectedAlert.confidence == null ? 'Cần xác minh' : `${(selectedAlert.confidence * 100).toFixed(1)}%`}</span><span><small>THỜI GIAN</small>{selectedAlert.time}</span></div>
                 <p className="detail-description">{selectedAlert.detail}</p>
-                <div className="evidence"><span><ImageIcon size={14} /> ẢNH BẰNG CHỨNG · PHÓNG VỪA KHUNG</span><div className="evidence-media"><img src={selectedAlert.image} alt={`Bằng chứng ${selectedAlert.camera}`} /></div></div>
+                <div className="evidence"><span><ImageIcon size={14} /> ẢNH BẰNG CHỨNG · GIỮ TỈ LỆ GỐC</span><div className="evidence-media"><img src={selectedAlert.image} alt={`Bằng chứng ${selectedAlert.camera}`} /></div></div>
                 {selectedAlert.type === 'ppe' && selectedAlert.fullFrameImage && <a className="evidence-context" href={selectedAlert.fullFrameImage} target="_blank" rel="noopener noreferrer">Xem toàn bộ khung hình tại thời điểm vi phạm ↗</a>}
                 <div className="review-actions"><button type="button" onClick={() => updateAlertStatus(selectedAlert.id, 'Đã xác nhận')}><CheckCircle2 size={15} /> Xác nhận sự cố</button><button type="button" onClick={() => updateAlertStatus(selectedAlert.id, 'Báo sai')}><XCircle size={15} /> Đánh dấu báo sai</button></div>
               </article>
@@ -549,7 +575,7 @@ export default function DemoPage() {
         .monitor-brand{display:flex;align-items:center;gap:11px;color:var(--ink);text-decoration:none}.monitor-brand>span{width:38px;height:38px;display:grid;place-items:center;color:#fff;background:var(--blue);border-radius:10px;box-shadow:0 7px 18px rgba(47,111,237,.2)}.monitor-brand div{display:flex;flex-direction:column}.monitor-brand strong{font-size:15px}.monitor-brand small{color:var(--muted);font-size:10px;margin-top:2px}.monitor-header-actions{display:flex;align-items:center;gap:23px}.monitor-header-actions>button,.monitor-header-actions>a,.monitor-header-actions>span{display:flex;align-items:center;gap:7px;color:#536273;font-size:10px;text-decoration:none}.monitor-header-actions>button{padding:8px 10px;border:1px solid var(--line);border-radius:7px}.monitor-header-actions>span i{width:7px;height:7px;border-radius:50%;background:#2aa66f}.monitor-header-actions>span.offline i{background:#d45d5d}
         .monitor-shell{width:min(1500px,calc(100% - 48px));margin:0 auto}.monitor-titlebar{padding:39px 0 28px;display:flex;justify-content:space-between;align-items:end;gap:30px}.monitor-kicker{color:var(--blue);font-size:9px;font-weight:700;letter-spacing:.14em}.monitor-titlebar h1{margin-top:8px;font-size:clamp(26px,3vw,40px);font-weight:650;letter-spacing:-.035em}.monitor-titlebar p{margin-top:8px;color:var(--muted);font-size:13px}.monitor-summary{display:flex;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 5px 18px rgba(31,53,72,.04)}.monitor-summary>span{min-width:118px;padding:12px 16px;display:grid;grid-template-columns:21px 1fr;align-items:center;border-left:1px solid var(--line)}.monitor-summary>span:first-child{border-left:0}.monitor-summary svg{grid-row:1/3;color:#7b8b99}.monitor-summary strong{font-size:16px}.monitor-summary small{color:var(--muted);font-size:9px}
         .panel{border:1px solid var(--line);border-radius:15px;background:#fff;box-shadow:0 12px 35px rgba(30,51,68,.055);overflow:hidden}.monitor-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(320px,.72fr);gap:18px;align-items:start}.panel-heading{min-height:64px;padding:0 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.panel-heading>div{display:flex;align-items:center;gap:11px}.panel-heading>div>svg{color:var(--blue)}.panel-heading>div>span{display:flex;flex-direction:column;gap:3px}.panel-heading strong{font-size:13px}.panel-heading small{color:var(--muted);font-size:9px}.camera-id{padding:7px 10px;color:#44617d;background:#edf3f8;border-radius:7px;font-size:10px;font-weight:700}
-        .camera-stage{position:relative;aspect-ratio:16/8.45;overflow:hidden;background:#111a21}.camera-stage video{width:100%;height:100%;display:block;object-fit:cover}.camera-placeholder{height:100%;padding:22px;display:flex;align-items:center;justify-content:center;gap:12px;color:#cbd3d8;font-size:12px;text-align:left}.camera-placeholder>span{display:flex;max-width:390px;flex-direction:column;gap:4px}.camera-placeholder strong{color:#eef3f6;font-size:14px}.camera-placeholder small{color:#93a3ad;font-size:11px;line-height:1.45}.camera-placeholder button{height:34px;padding:0 11px;display:inline-flex;align-items:center;gap:6px;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:7px;background:#2f6fed;font-size:11px;font-weight:700;white-space:nowrap}.camera-placeholder.error>svg{color:#ef9292}.camera-live,.camera-ai{position:absolute;top:15px;display:flex;align-items:center;gap:7px;padding:7px 9px;color:#fff;background:rgba(17,28,36,.78);border-radius:6px;font-size:8px;font-weight:700;letter-spacing:.06em;pointer-events:none}.camera-live{left:15px}.camera-live i{width:6px;height:6px;border-radius:50%;background:#f36363;box-shadow:0 0 0 4px rgba(243,99,99,.16)}.camera-ai{right:15px}.pulse{animation:pulse 1.25s ease-in-out infinite}@keyframes pulse{50%{opacity:.35}}.camera-caption{position:absolute;left:0;right:0;bottom:38px;padding:35px 18px 12px;display:flex;justify-content:space-between;gap:20px;color:#fff;background:linear-gradient(transparent,rgba(8,14,18,.75));font-size:10px;pointer-events:none}.camera-caption span{display:flex;align-items:center;gap:6px}.camera-caption span:last-child{color:#dbe2e6}.violation-roi{position:absolute;z-index:4;border:2px solid #ef4444;box-shadow:0 0 0 1px rgba(255,255,255,.42),0 0 18px rgba(239,68,68,.24);pointer-events:none}.violation-roi:before,.violation-roi:after{content:'';position:absolute;width:14px;height:14px;border-color:#fff}.violation-roi:before{left:-2px;top:-2px;border-left:3px solid;border-top:3px solid}.violation-roi:after{right:-2px;bottom:-2px;border-right:3px solid;border-bottom:3px solid}.violation-roi>span{position:absolute;left:-2px;top:-24px;padding:5px 7px;color:#fff;background:#d93636;font-size:7px;font-weight:700;white-space:nowrap}
+        .camera-stage{position:relative;aspect-ratio:16/9;overflow:hidden;background:transparent}.camera-stage video{width:100%;height:100%;display:block;object-fit:cover}.camera-placeholder{height:100%;background:#f4f7fa;padding:22px;display:flex;align-items:center;justify-content:center;gap:12px;color:#697887;font-size:12px;text-align:left}.camera-placeholder>span{display:flex;max-width:390px;flex-direction:column;gap:4px}.camera-placeholder strong{color:#34465b;font-size:14px}.camera-placeholder small{color:#93a3ad;font-size:11px;line-height:1.45}.camera-placeholder button{height:34px;padding:0 11px;display:inline-flex;align-items:center;gap:6px;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:7px;background:#2f6fed;font-size:11px;font-weight:700;white-space:nowrap}.camera-placeholder.error>svg{color:#ef9292}.camera-live,.camera-ai{position:absolute;top:15px;display:flex;align-items:center;gap:7px;padding:7px 9px;color:#34465b;background:rgba(255,255,255,.94);border-radius:6px;font-size:8px;font-weight:700;letter-spacing:.06em;pointer-events:none}.camera-live{left:15px}.camera-live i{width:6px;height:6px;border-radius:50%;background:#f36363;box-shadow:0 0 0 4px rgba(243,99,99,.16)}.camera-ai{right:15px}.pulse{animation:pulse 1.25s ease-in-out infinite}@keyframes pulse{50%{opacity:.35}}.camera-caption{padding:11px 18px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px 20px;color:#536273;background:#fff;font-size:10px}.camera-caption span{display:flex;align-items:center;gap:6px}.camera-caption span:last-child{color:#697887}.violation-roi{position:absolute;z-index:4;border:2px solid #ef4444;box-shadow:0 0 0 1px rgba(255,255,255,.42),0 0 18px rgba(239,68,68,.24);pointer-events:none}.violation-roi:before,.violation-roi:after{content:'';position:absolute;width:14px;height:14px;border-color:#fff}.violation-roi:before{left:-2px;top:-2px;border-left:3px solid;border-top:3px solid}.violation-roi:after{right:-2px;bottom:-2px;border-right:3px solid;border-bottom:3px solid}.violation-roi>span{position:absolute;left:-2px;top:-24px;padding:5px 7px;color:#fff;background:#d93636;font-size:7px;font-weight:700;white-space:nowrap}
         .camera-tabs{padding:13px;display:grid;grid-template-columns:repeat(5,1fr);gap:8px;border-bottom:1px solid var(--line)}.camera-tabs button{min-width:0;padding:10px 8px;text-align:left;border:1px solid var(--line);border-radius:9px;background:#f8fafb}.camera-tabs button.active{color:#1f5fcf;border-color:#8fb1f4;background:#eaf1ff}.camera-tabs button:disabled{opacity:.48}.camera-tabs span,.camera-tabs small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.camera-tabs span{font-size:10px;font-weight:700}.camera-tabs small{margin-top:4px;color:#788896;font-size:8px}
         .auto-pipeline{min-height:92px;padding:12px 17px;display:grid;grid-template-columns:1fr 1fr 1.15fr 1fr;align-items:center;gap:12px}.pipeline-title,.pipeline-model{display:flex;align-items:center;gap:9px}.pipeline-title>svg,.pipeline-model>svg{color:var(--blue)}.pipeline-title span,.pipeline-model span{display:flex;flex-direction:column;gap:4px}.pipeline-title strong,.pipeline-model strong{font-size:10px}.pipeline-title small,.pipeline-model small{color:var(--muted);font-size:8px}.pipeline-model{position:relative;padding:10px;border:1px solid var(--line);border-radius:9px}.pipeline-model>i{width:6px;height:6px;margin-left:auto;border-radius:50%;background:#b8c1c7}.pipeline-model>i.ready{background:#2aa66f}.pipeline-progress{display:grid;grid-template-columns:1fr auto;gap:5px;color:#687987;font-size:8px}.pipeline-progress strong{color:var(--ink)}.pipeline-progress>div{grid-column:1/3;height:4px;overflow:hidden;background:#e7edf1;border-radius:5px}.pipeline-progress>div i{display:block;height:100%;background:var(--blue);transition:width .35s}
         .alert-count{min-width:27px;height:27px;display:grid;place-items:center;color:#ad4f50;background:#fff0f0;border-radius:50%;font-size:10px;font-weight:700}.alert-list{height:560px;padding:14px;display:flex;flex-direction:column;gap:11px;overflow-y:auto;background:#f8fafb;scrollbar-width:thin!important}.alert-item{padding:15px;border:1px solid #e2e7eb;border-left:3px solid #d69a47;border-radius:10px;background:#fff}.alert-item.critical{border-left-color:#d86060}.alert-item.high{border-left-color:#dc8751}.alert-topline,.alert-actions{display:flex;align-items:center;justify-content:space-between}.severity{padding:5px 7px;color:#8a641f;background:#fff4dd;border-radius:5px;font-size:8px;font-style:normal;font-weight:700}.severity.high{color:#a85525;background:#fff0e7}.severity.critical{color:#a84445;background:#fdeaea}.alert-topline small{color:#7c8a96;font-size:8px}.alert-item h2{margin-top:13px;font-size:13px}.alert-item>p{margin-top:6px;color:var(--muted);font-size:9px}.alert-actions{margin-top:14px;padding-top:12px;border-top:1px solid #edf0f2}.alert-actions button{padding:8px 10px;color:#fff;background:var(--blue);border-radius:6px;font-size:8px;font-weight:700}.alert-actions span{color:#a06a28;font-size:8px}.scanning-empty{min-height:400px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#687a88;text-align:center}.scanning-empty>span{width:50px;height:50px;display:grid;place-items:center;color:var(--blue);background:#eaf1ff;border-radius:50%}.scanning-empty strong{margin-top:13px;font-size:11px}.scanning-empty small{max-width:220px;margin-top:6px;line-height:1.5;font-size:9px}.alerts-footer{height:51px;padding:0 18px;display:flex;align-items:center;gap:8px;color:#5d7468;border-top:1px solid var(--line);font-size:9px}.alerts-footer i{width:6px;height:6px;margin-left:auto;border-radius:50%;background:#2aa66f}
@@ -557,10 +583,12 @@ export default function DemoPage() {
         .empty-history{min-height:390px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#70818e}.empty-history strong{margin-top:12px;font-size:12px}.empty-history span{margin-top:6px;font-size:9px}.stats-view{padding:22px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stats-view>div{min-height:105px;padding:18px;display:flex;flex-direction:column;justify-content:space-between;border:1px solid var(--line);border-radius:10px;background:#f9fbfc}.stats-view small{color:var(--muted);font-size:9px}.stats-view strong{font-size:27px}.stats-view article{grid-column:1/5;padding:19px;border:1px solid var(--line);border-radius:10px}.stats-view h3{font-size:12px}.stats-view p{margin-top:12px;display:flex;justify-content:space-between;color:#647481;font-size:10px}.system-note{margin-top:22px;padding:17px 20px;display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:10px}.system-note>svg{color:var(--blue)}.system-note div{display:flex;flex-direction:column;gap:4px}.system-note strong{font-size:10px}.system-note small{color:var(--muted);font-size:8px}.system-note>span{color:#2b8e66;font-size:8px;font-weight:700}.monitor-footer{min-height:90px;display:flex;align-items:center;justify-content:space-between;color:#80909c;font-size:9px}.alert-toast{position:fixed;right:24px;top:88px;z-index:50;width:min(360px,calc(100% - 32px));padding:14px;display:flex;align-items:center;gap:11px;text-align:left;color:var(--ink);border:1px solid #efcaca;border-left:4px solid #d86060;border-radius:11px;background:#fff;box-shadow:0 18px 55px rgba(31,46,58,.18);animation:toast-in .3s ease}.alert-toast>span{width:38px;height:38px;display:grid;place-items:center;color:#c95050;background:#fdeaea;border-radius:8px}.alert-toast div{display:flex;flex-direction:column;gap:4px}.alert-toast small{color:#9b6363;font-size:7px}.alert-toast strong{font-size:11px}.roi-evidence-crop{position:relative;width:100%;max-height:380px;overflow:hidden;background:#10191e}.roi-evidence-crop img{position:absolute!important;height:auto!important;max-height:none!important;max-width:none!important;object-fit:initial!important}.evidence-media.cropped{min-height:0}@keyframes toast-in{from{transform:translateY(-12px);opacity:0}}.spin{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
         .monitor-brand small{font-size:12px}.monitor-header-actions>button,.monitor-header-actions>a,.monitor-header-actions>span{font-size:12px}.monitor-kicker{font-size:11px}.monitor-summary small{font-size:11px}.panel-heading strong{font-size:15px}.panel-heading small{font-size:11px}.camera-id{font-size:12px}.camera-placeholder{font-size:14px}.camera-live,.camera-ai{font-size:10px}.camera-caption{font-size:12px}.violation-roi>span{font-size:10px}.camera-tabs span{font-size:12px}.camera-tabs small{font-size:10px}.pipeline-title strong,.pipeline-model strong{font-size:12px}.pipeline-title small,.pipeline-model small{font-size:10px}.pipeline-progress{font-size:10px}.alert-count{font-size:12px}.severity{font-size:10px}.alert-topline small{font-size:10px}.alert-item h2{font-size:15px}.alert-item>p{font-size:11px}.alert-actions button,.alert-actions span{font-size:10px}.scanning-empty strong{font-size:13px}.scanning-empty small,.alerts-footer{font-size:11px}.history-tabs button{font-size:14px}.history-tabs button span{font-size:10px}.history-list button strong{font-size:12px}.history-list button small{font-size:11px}.history-list button em{font-size:10px}.detail-heading p,.detail-heading>span{font-size:11px}.detail-meta{font-size:11px}.detail-meta small{font-size:10px}.detail-description{font-size:13px}.evidence>span{font-size:11px}.review-actions button{font-size:11px}.empty-history strong{font-size:14px}.empty-history span,.stats-view small{font-size:11px}.stats-view h3{font-size:14px}.stats-view p{font-size:12px}.system-note strong{font-size:12px}.system-note small,.system-note>span{font-size:10px}.monitor-footer{font-size:11px}.alert-toast small{font-size:10px}.alert-toast strong{font-size:13px}
         .demo-sync-warning{margin:18px 0 0;padding:12px 15px;display:flex;align-items:center;gap:10px;border:1px solid #e9c981;border-radius:10px;background:#fff8e7;color:#7a5620;font-size:12px;line-height:1.45}.demo-sync-warning span{flex:1}.demo-sync-warning a{color:#1f5fcf;font-weight:700;text-decoration:none;white-space:nowrap}.demo-alert-unsynced{display:inline-block;margin-top:8px;color:#9a671f;font-size:11px;font-weight:700}.evidence-original{display:table;margin:0 0 12px auto;color:#245fcb;font-size:12px;font-weight:700;text-decoration:none}.evidence-original:hover,.demo-sync-warning a:hover{text-decoration:underline}.evidence-media:not(.cropped)>img{width:auto;height:auto;max-width:100%;max-height:360px;object-fit:contain}.roi-evidence-crop img{image-rendering:auto}
+        .demo-scenario-picker{display:flex;align-items:center;gap:12px;padding:12px 18px;border-top:1px solid var(--line);font-size:13px;color:#647481}.demo-scenario-picker>span{flex:none;font-weight:600}.demo-scenario-picker select{width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#f8fafc;color:var(--ink);font:inherit;font-size:13px}
         .pipeline-progress small{grid-column:1/3;color:#71818e;font-size:9px;line-height:1.3}.evidence-media{height:clamp(280px,48vw,430px);min-height:0}.evidence-media>img{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;object-fit:contain!important}.evidence-context{display:table;margin:9px 0 0 auto;color:#245fcb;font-size:12px;font-weight:700;text-decoration:none}.evidence-context:hover{text-decoration:underline}
+        .camera-stage video{object-fit:contain}.evidence-media{height:auto;min-height:160px;max-height:300px;padding:12px}.evidence-media>img{width:auto!important;height:auto!important;max-width:min(100%,480px)!important;max-height:276px!important;object-fit:contain!important}
         @media(max-width:1120px){.monitor-grid{grid-template-columns:1.35fr .75fr}.auto-pipeline{grid-template-columns:1fr 1fr}.pipeline-title{display:none}.history-workspace{grid-template-columns:1fr}.history-list{max-height:330px;border-right:0;border-bottom:1px solid var(--line)}}
         @media(max-width:820px){.monitor-shell{width:min(100% - 28px,720px)}.monitor-titlebar{align-items:flex-start;flex-direction:column}.monitor-summary{width:100%}.monitor-summary>span{min-width:0;flex:1}.monitor-grid{grid-template-columns:1fr}.alert-list{height:auto;min-height:260px}.stats-view{grid-template-columns:repeat(2,1fr)}.stats-view article{grid-column:1/3}}
-        @media(max-width:580px){.monitor-header{height:64px;padding:0 15px}.monitor-header-actions>span,.monitor-header-actions>button{display:none}.monitor-header-actions a{font-size:0}.monitor-titlebar{padding-top:27px}.monitor-titlebar h1{font-size:26px}.monitor-summary>span{padding:9px;grid-template-columns:17px 1fr}.camera-stage{aspect-ratio:16/10}.camera-caption{display:none}.camera-tabs{grid-template-columns:repeat(5,minmax(52px,1fr));overflow-x:auto}.camera-tabs button{text-align:center}.camera-tabs small{font-size:6px}.auto-pipeline{grid-template-columns:1fr}.pipeline-title{display:flex}.pipeline-progress{padding:7px}.history-tabs{padding:0 14px}.history-workspace{min-height:0}.history-list{max-height:360px}.history-list button{grid-template-columns:6px 1fr auto}.history-list .severity{display:none}.history-detail{padding:19px 15px}.detail-meta{gap:10px}.review-actions{flex-direction:column}.review-actions button{justify-content:center}.stats-view{padding:14px}.monitor-footer{flex-direction:column;align-items:flex-start;justify-content:center;gap:6px}.alert-toast{right:16px;top:75px}.system-note{grid-template-columns:20px 1fr}.system-note>span{display:none}}
+        @media(max-width:580px){.monitor-header{height:64px;padding:0 15px}.monitor-header-actions>span,.monitor-header-actions>button{display:none}.monitor-header-actions a{font-size:0}.monitor-titlebar{padding-top:27px}.monitor-titlebar h1{font-size:26px}.monitor-summary>span{padding:9px;grid-template-columns:17px 1fr}.camera-stage{aspect-ratio:16/9}.camera-caption{padding:10px 14px}.camera-tabs{grid-template-columns:repeat(5,minmax(52px,1fr));overflow-x:auto}.camera-tabs button{text-align:center}.camera-tabs small{font-size:6px}.auto-pipeline{grid-template-columns:1fr}.pipeline-title{display:flex}.pipeline-progress{padding:7px}.history-tabs{padding:0 14px}.history-workspace{min-height:0}.history-list{max-height:360px}.history-list button{grid-template-columns:6px 1fr auto}.history-list .severity{display:none}.history-detail{padding:19px 15px}.detail-meta{gap:10px}.review-actions{flex-direction:column}.review-actions button{justify-content:center}.stats-view{padding:14px}.monitor-footer{flex-direction:column;align-items:flex-start;justify-content:center;gap:6px}.alert-toast{right:16px;top:75px}.system-note{grid-template-columns:20px 1fr}.system-note>span{display:none}}
         @media(prefers-reduced-motion:reduce){.monitoring-demo *{animation:none!important;transition:none!important}}
       `}</style>
     </main>

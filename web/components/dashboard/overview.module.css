@@ -28,7 +28,7 @@
 
 .eyebrow {
   color: #2f6fec;
-  font-size: 0.67rem;
+  font-size: calc(0.67rem + 2px);
   font-weight: 800;
   letter-spacing: 0.15em;
 }
@@ -52,7 +52,7 @@
   background: #fff;
   color: #39445a;
   font: inherit;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem + 2px);
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
@@ -84,7 +84,7 @@
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.72);
   color: #6c768a;
-  font-size: 0.73rem;
+  font-size: calc(0.73rem + 2px);
 }
 
 .statusStrip span {
@@ -152,7 +152,7 @@
 .kpiTop em {
   overflow: hidden;
   color: #8b94a6;
-  font-size: 0.65rem;
+  font-size: calc(0.65rem + 2px);
   font-style: normal;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -175,7 +175,7 @@
 .kpiCard > p {
   margin: 2px 0 12px;
   color: #505b70;
-  font-size: 0.79rem;
+  font-size: calc(0.79rem + 2px);
   font-weight: 650;
 }
 
@@ -184,7 +184,7 @@
   align-items: center;
   gap: 5px;
   color: #98a0af;
-  font-size: 0.65rem;
+  font-size: calc(0.65rem + 2px);
 }
 
 .primaryGrid {
@@ -224,7 +224,7 @@
 
 .panelHeading span {
   color: #929bab;
-  font-size: 0.66rem;
+  font-size: calc(0.66rem + 2px);
 }
 
 .panelHeading > a {
@@ -233,7 +233,7 @@
   align-items: center;
   gap: 4px;
   color: #2f6fec;
-  font-size: 0.67rem;
+  font-size: calc(0.67rem + 2px);
   font-weight: 750;
   text-decoration: none;
 }
@@ -278,7 +278,7 @@
   border-radius: 5px;
   background: rgba(12, 18, 31, 0.5);
   color: #fff;
-  font-size: 0.55rem;
+  font-size: calc(0.55rem + 3px);
   font-style: normal;
   font-weight: 800;
 }
@@ -288,7 +288,7 @@
   right: 8px;
   bottom: 7px;
   color: rgba(255, 255, 255, 0.62);
-  font-size: 0.49rem;
+  font-size: calc(0.49rem + 3px);
   font-style: normal;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -303,7 +303,7 @@
 .cameraInfo strong {
   overflow: hidden;
   color: #344056;
-  font-size: 0.69rem;
+  font-size: calc(0.69rem + 2px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -314,7 +314,7 @@
   align-items: center;
   gap: 4px;
   color: #9099a9;
-  font-size: 0.57rem;
+  font-size: calc(0.57rem + 3px);
 }
 
 .readyDot,
@@ -350,20 +350,20 @@
 
 .emptyState strong {
   color: #344056;
-  font-size: 0.78rem;
+  font-size: calc(0.78rem + 2px);
 }
 
 .emptyState p {
   max-width: 280px;
   margin: 8px 0 15px;
   color: #8b95a7;
-  font-size: 0.65rem;
+  font-size: calc(0.65rem + 2px);
   line-height: 1.6;
 }
 
 .emptyState a {
   color: #2f6fec;
-  font-size: 0.66rem;
+  font-size: calc(0.66rem + 2px);
   font-weight: 750;
   text-decoration: none;
 }
@@ -407,18 +407,18 @@
 
 .pipelineList strong {
   color: #3a455a;
-  font-size: 0.7rem;
+  font-size: calc(0.7rem + 2px);
 }
 
 .pipelineList small {
   color: #99a1b0;
-  font-size: 0.58rem;
+  font-size: calc(0.58rem + 3px);
 }
 
 .pipelineList em,
 .datasetRow > em {
   color: #6e788b;
-  font-size: 0.61rem;
+  font-size: calc(0.61rem + 3px);
   font-style: normal;
   font-weight: 700;
 }
@@ -457,12 +457,12 @@
 
 .quickGrid strong {
   color: #39455a;
-  font-size: 0.67rem;
+  font-size: calc(0.67rem + 2px);
 }
 
 .quickGrid small {
   color: #9aa2b0;
-  font-size: 0.56rem;
+  font-size: calc(0.56rem + 3px);
 }
 
 @keyframes spin {

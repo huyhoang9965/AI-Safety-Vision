@@ -1,0 +1,12 @@
+[
+  { "key": "CAM-01", "filenames": ["0_tr10.mp4", "0_tr11.mp4"], "location": "Toàn cảnh xưởng", "note": "Lối đi sản xuất", "roi": { "left": 58, "top": 12, "width": 31, "height": 73 }, "walkway": { "monitored_floor": [[0.73,0.36],[0.81,0.36],[0.96,1],[0.58,1]], "lane_search": [[0.76,0.37],[0.84,0.37],[0.96,1],[0.85,1]] } },
+  { "key": "CAM-02", "filenames": ["3_tr39.mp4", "3_te1.mp4", "7_tr19.mp4"], "scenarioNames": ["Hàng xếp cao · xe đi ngang", "Hàng xếp cao · xe quay và tiến gần", "Đối chứng · chở hàng thấp"], "location": "Khu vực xe nâng", "note": "Bãi trung chuyển", "roi": { "left": 20, "top": 12, "width": 67, "height": 80 } },
+  { "key": "CAM-03", "filenames": ["2_te3.mp4", "2_tr14.mp4", "2_tr91.mp4"], "location": "Tủ điện máy ép", "note": "Khu kỹ thuật", "roi": { "left": 4, "top": 12, "width": 49, "height": 76 }, "panel_search": [0.099, 0.56, 0.18, 0.741] },
+  { "key": "CAM-04", "filenames": ["1_tr25.mp4", "1_te9.mp4"], "location": "Máy gia công", "note": "Khu vực hạn chế", "roi": { "left": 2, "top": 16, "width": 57, "height": 76 }, "person_tracking_seconds": 1.5, "confirm_person_bodies": true, "clip_views": {
+    "1_tr25.mp4": { "person_focus": [[0.095,0.18,0.47,0.745],[0.208,0.648,0.573,1]], "panel_search": [0.275,0.70,0.37,0.97], "panel_interior": [[0.286,0.765],[0.342,0.736],[0.342,0.906],[0.286,0.943]] },
+    "1_te9.mp4": { "person_focus": [[0.025,0.045,0.29,0.30],[0.026,0.463,0.547,1]], "panel_search": [0.099,0.55,0.19,0.81], "panel_interior": [[0.106,0.576],[0.16,0.59],[0.173,0.733],[0.113,0.715]] }
+  } },
+  { "key": "CAM-05", "filenames": ["0_tr92.mp4", "0_tr32.mp4", "0_tr79.mp4"], "location": "Lối đi chính", "note": "Giao cắt nội bộ", "roi": { "left": 52, "top": 13, "width": 39, "height": 75 }, "walkway": { "monitored_floor": [[0.73,0.36],[0.81,0.36],[0.96,1],[0.58,1]], "lane_search": [[0.76,0.37],[0.84,0.37],[0.96,1],[0.85,1]] }, "clip_views": {
+    "0_tr79.mp4": { "person_focus": [[0.095,0.18,0.47,0.745]], "person_focus_input_size": 640, "person_tracking_seconds": 1.5, "confirm_person_bodies": true, "person_body_context_size": [800,450] }
+  } }
+]

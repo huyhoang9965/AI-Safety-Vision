@@ -23,7 +23,7 @@
 }
 
 .authLoading strong { font-size: 14px; }
-.authLoading small { color: #7b8997; font-size: 11px; letter-spacing: .08em; }
+.authLoading small { color: #7b8997; font-size: 13px; letter-spacing: .08em; }
 
 .loadingMark {
   width: 52px;
@@ -89,8 +89,8 @@
 }
 
 .brandText { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.brandText strong { font-size: 13px; letter-spacing: .055em; }
-.brandText small { color: #8294a7; font-size: 7px; letter-spacing: .17em; white-space: nowrap; }
+.brandText strong { font-size: 15px; letter-spacing: .055em; }
+.brandText small { color: #8294a7; font-size: 10px; letter-spacing: .17em; white-space: nowrap; }
 
 .workspace {
   margin: 17px 14px 7px;
@@ -113,13 +113,13 @@
   color: #93c5fd;
   border-radius: 8px;
   background: rgba(37,99,235,.18);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .workspaceText { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.workspaceText small { color: #76889a; font-size: 8px; }
-.workspaceText strong { overflow: hidden; color: #e5ebf1; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.workspaceText small { color: #76889a; font-size: 11px; }
+.workspaceText strong { overflow: hidden; color: #e5ebf1; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 
 .navigation {
   flex: 1;
@@ -134,7 +134,7 @@
   display: block;
   margin: 0 10px 7px;
   color: #5f7184;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: .14em;
   text-transform: uppercase;
@@ -165,8 +165,8 @@
 }
 
 .navItem svg { flex: 0 0 auto; }
-.navItem span { overflow: hidden; font-size: 11px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
-.navItem em { margin-left: auto; padding: 2px 6px; color: #fca5a5; border-radius: 9px; background: rgba(239,68,68,.15); font-size: 8px; font-style: normal; }
+.navItem span { overflow: hidden; font-size: 13px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
+.navItem em { margin-left: auto; padding: 2px 6px; color: #fca5a5; border-radius: 9px; background: rgba(239,68,68,.15); font-size: 11px; font-style: normal; }
 .navItem:hover { color: #e4ebf2; background: rgba(255,255,255,.045); }
 .navItemActive { color: #fff; background: linear-gradient(90deg, rgba(37,99,235,.23), rgba(37,99,235,.07)); }
 .navItemActive::before { background: #60a5fa; }
@@ -189,8 +189,8 @@
 .offlineDot { background: #ef6262; box-shadow: 0 0 0 4px rgba(239,98,98,.1); }
 .pendingDot { background: #d4a72c; box-shadow: 0 0 0 4px rgba(212,167,44,.1); }
 .sidebarStatus span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.sidebarStatus strong { overflow: hidden; color: #b9c5d0; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.sidebarStatus small { color: #607386; font-size: 7px; }
+.sidebarStatus strong { overflow: hidden; color: #b9c5d0; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.sidebarStatus small { color: #607386; font-size: 10px; }
 
 .collapseButton {
   width: 100%;
@@ -203,7 +203,7 @@
   border: 1px solid rgba(255,255,255,.07);
   border-radius: 7px;
   background: rgba(255,255,255,.025);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .collapseButton:hover { color: #c6d1db; background: rgba(255,255,255,.05); }
@@ -234,7 +234,7 @@
 
 .topbarTitle { display: flex; align-items: center; gap: 12px; }
 .topbarTitle div { display: flex; flex-direction: column; gap: 3px; }
-.topbarTitle span { color: #8a98a5; font-size: 8px; }
+.topbarTitle span { color: #8a98a5; font-size: 11px; }
 .topbarTitle strong { font-size: 17px; letter-spacing: -.02em; }
 .topbarActions { display: flex; align-items: center; gap: 9px; }
 
@@ -250,7 +250,7 @@
   border-radius: 9px;
   background: #f3f7ff;
   text-decoration: none;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 750;
   white-space: nowrap;
   transition: color .18s ease, border-color .18s ease, background .18s ease, transform .18s ease;
@@ -288,7 +288,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .search kbd {
@@ -301,7 +301,7 @@
   border-radius: 4px;
   background: #fff;
   font-family: inherit;
-  font-size: 7px;
+  font-size: 10px;
 }
 
 .actionWrap { position: relative; }
@@ -341,13 +341,13 @@
   color: #fff;
   border-radius: 9px;
   background: linear-gradient(145deg, #315fbd, #1d3f83);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .profileButton div { min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
-.profileButton strong { overflow: hidden; max-width: 130px; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.profileButton small { overflow: hidden; max-width: 130px; color: #8a98a6; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.profileButton strong { overflow: hidden; max-width: 130px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.profileButton small { overflow: hidden; max-width: 130px; color: #8a98a6; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 
 .popover, .profileMenu {
   width: 290px;
@@ -363,19 +363,19 @@
 }
 
 .popoverHead { padding: 14px 16px; display: flex; justify-content: space-between; border-bottom: 1px solid #e8edf1; }
-.popoverHead strong { font-size: 11px; }
-.popoverHead span { color: #7b8996; font-size: 8px; }
+.popoverHead strong { font-size: 13px; }
+.popoverHead span { color: #7b8996; font-size: 11px; }
 .emptyPopover { min-height: 155px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #8a98a5; text-align: center; }
 .emptyPopover svg { margin-bottom: 4px; color: #aebbc6; }
-.emptyPopover strong { color: #526170; font-size: 10px; }
-.emptyPopover small { font-size: 8px; }
+.emptyPopover strong { color: #526170; font-size: 13px; }
+.emptyPopover small { font-size: 11px; }
 
 .profileMenu { width: 245px; padding: 7px; }
 .profileSummary { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; padding: 9px; border-bottom: 1px solid #e8edf1; }
 .profileSummary div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.profileSummary strong { font-size: 10px; }
-.profileSummary small { overflow: hidden; color: #84919e; font-size: 8px; text-overflow: ellipsis; }
-.profileMenu > a, .profileMenu > button { width: 100%; height: 35px; display: flex; align-items: center; gap: 9px; padding: 0 9px; color: #586776; border-radius: 7px; text-decoration: none; font-size: 9px; }
+.profileSummary strong { font-size: 13px; }
+.profileSummary small { overflow: hidden; color: #84919e; font-size: 11px; text-overflow: ellipsis; }
+.profileMenu > a, .profileMenu > button { width: 100%; height: 35px; display: flex; align-items: center; gap: 9px; padding: 0 9px; color: #586776; border-radius: 7px; text-decoration: none; font-size: 12px; }
 .profileMenu > a:hover, .profileMenu > button:hover { color: #1f5bc4; background: #f1f5fa; }
 .profileMenu > button:hover { color: #c84444; background: #fff2f2; }
 
@@ -397,7 +397,7 @@
   color: #8996a2;
   border-top: 1px solid #e3e9ef;
   background: #fff;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .dashboardFooter span { display: flex; align-items: center; gap: 6px; }
@@ -454,3 +454,14 @@
   .popover { right: -52px; width: min(290px, calc(100vw - 28px)); }
   .profileMenu { right: -3px; }
 }
+.notificationBadge { position: absolute; top: -3px; right: -5px; display: grid; min-width: 18px; height: 18px; place-items: center; padding: 0 4px; border: 2px solid #fff; border-radius: 12px; background: #d7463c; color: #fff; font-size: 10px; font-weight: 700; }
+.notificationList { max-height: 390px; overflow-y: auto; }
+.notificationList > p { margin: 0; padding: 12px 16px; color: #b34330; background: #fff6f3; font-size: 13px; line-height: 1.5; }
+.notificationList > a { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-bottom: 1px solid #edf0f4; color: #526170; text-decoration: none; }
+.notificationList > a:hover { background: #f5f8fc; }
+.notificationList > a > svg { flex: none; color: #d7463c; }
+.notificationList > a > span { display: grid; gap: 5px; min-width: 0; }
+.notificationList strong { font-size: 13px; line-height: 1.4; }
+.notificationList small { color: #8b95a3; font-size: 12px; }
+.notificationList > .allNotifications { justify-content: center; color: #2563eb; font-size: 13px; font-weight: 600; }
+.notificationError { padding: 10px 16px; color: #b34330; font-size: 13px; line-height: 1.5; }

@@ -3,14 +3,15 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.api.auth import require_permission
 from app.chat_schemas import (
-    ChatActionResponse, ChatSendRequest, ChatSendResponse, ChatStatusResponse,
+    ChatActionResponse, ChatSendRequest, ChatSendResponse, ChatSpeechRequest, ChatStatusResponse,
     ConversationDetail, ConversationItem, FeedbackRequest,
 )
 from app.services import chat_service
+from app.services.chat_speech import generate_speech
 from app.services.chat_service import ChatAccessError, ChatNotFoundError, ChatProviderError
 
 
@@ -42,6 +43,15 @@ def conversations(
     limit: int = Query(default=30, ge=1, le=100),
 ) -> list[ConversationItem]:
     return [ConversationItem(**item) for item in chat_service.list_conversations(user, limit)]
+
+
+@router.post("/speech")
+def speech(body: ChatSpeechRequest, user: Annotated[dict, Depends(chat_user)]) -> Response:
+    try:
+        audio, media_type = generate_speech(body, user)
+        return Response(content=audio, media_type=media_type, headers={"Cache-Control": "no-store"})
+    except Exception as exc:
+        raise _error(exc) from exc
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)

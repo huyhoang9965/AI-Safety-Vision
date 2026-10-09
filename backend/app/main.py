@@ -27,6 +27,7 @@ from app.config import get_settings
 from app.database import database
 from app.models.registry import registry
 from app.services.manifest import load_test_manifest
+from app.services.video_playback import warmup_demo_previews
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     del app
     settings = get_settings()
+    # OpenCV and Torch otherwise compete for all cores with the browser.
+    import cv2
+    cv2.setNumThreads(min(2, settings.ai_cpu_threads))
     settings.ensure_storage()
     videos = load_test_manifest()
     logger.info("Loaded %d final_split=test videos from %s", len(videos), settings.manifest_path)
@@ -50,10 +54,15 @@ async def lifespan(app: FastAPI):
             "PostgreSQL is not ready; inference remains real but history will not be persisted: %s",
             exc,
         )
-    if settings.preload_models and not os.getenv("PYTEST_CURRENT_TEST"):
+    def warmup_media_and_models():
+        warmup_demo_previews()
+        if settings.preload_models:
+            registry.warmup_all()
+
+    if not os.getenv("PYTEST_CURRENT_TEST"):
         Thread(
-            target=registry.warmup_all,
-            name="ai-model-preloader",
+            target=warmup_media_and_models,
+            name="media-model-preloader",
             daemon=True,
         ).start()
     yield

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from dataclasses import replace
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -6,9 +7,11 @@ from fastapi.testclient import TestClient
 
 from app.api.chat import chat_user
 from app.main import app
+from app.config import get_settings
 
 
-def test_chat_status_is_permission_protected_and_reports_local_mode():
+def test_chat_status_is_permission_protected_and_reports_local_mode(monkeypatch):
+    monkeypatch.setattr("app.services.chat_service.get_settings", lambda: replace(get_settings(), openrouter_api_key=""))
     app.dependency_overrides[chat_user] = lambda: {"id": uuid4(), "memberships": []}
     try:
         with patch("app.database.database.initialize_database", side_effect=RuntimeError("offline")):
@@ -49,5 +52,22 @@ def test_chat_message_returns_persisted_contract(monkeypatch):
         assert response.status_code == 200
         assert response.json()["conversation_id"] == str(conversation_id)
         assert response.json()["assistant_message"]["metadata"]["read_only"] is True
+    finally:
+        app.dependency_overrides.pop(chat_user, None)
+
+
+def test_chat_status_reports_openrouter_without_exposing_key(monkeypatch):
+    settings = replace(get_settings(), openrouter_api_key="fake-private-key", openrouter_model="test-model")
+    monkeypatch.setattr("app.services.chat_service.get_settings", lambda: settings)
+    app.dependency_overrides[chat_user] = lambda: {"id": uuid4(), "memberships": []}
+    try:
+        with patch("app.database.database.initialize_database", side_effect=RuntimeError("offline")):
+            with TestClient(app) as client:
+                response = client.get("/api/chat/status")
+        assert response.status_code == 200
+        assert response.json()["mode"] == "openrouter"
+        assert response.json()["llm_configured"] is True
+        assert response.json()["model"] == "test-model"
+        assert "fake-private-key" not in response.text
     finally:
         app.dependency_overrides.pop(chat_user, None)

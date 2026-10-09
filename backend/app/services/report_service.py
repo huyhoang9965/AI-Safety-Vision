@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.database.database import connection
+from app.services.alert_service import overdue_condition
 
 
 class ReportConflictError(ValueError):
@@ -93,6 +94,37 @@ def _event_summary(conn: Any, organizations: list[Any], start_at: datetime, end_
     return dict(row)
 
 
+def _response_metrics(conn: Any, organizations: list[Any], start_at: datetime, end_at: datetime, site_code: str | None) -> dict[str, Any]:
+    """Current queue and response times for events detected in the selected period."""
+    row = conn.execute(
+        f"""
+        WITH events AS (
+          SELECT e.status, {overdue_condition()} AS overdue,
+                 CASE WHEN acknowledged_at >= detected_at
+                      THEN EXTRACT(EPOCH FROM acknowledged_at-detected_at)::float8 END AS ack_seconds,
+                 CASE WHEN status='resolved' AND resolved_at >= detected_at
+                      THEN EXTRACT(EPOCH FROM resolved_at-detected_at)::float8 END AS resolution_seconds
+          FROM safety.safety_events e WHERE {_event_where(site_code)}
+        )
+        SELECT count(*) FILTER (WHERE status='new')::int AS pending_events,
+               count(*) FILTER (WHERE status='acknowledged')::int AS acknowledged_events,
+               count(*) FILTER (WHERE overdue)::int AS overdue_events,
+               count(ack_seconds)::int AS acknowledge_samples,
+               count(resolution_seconds)::int AS resolution_samples,
+               count(*) FILTER (WHERE ack_seconds <= 86400)::int AS acknowledged_within_24h,
+               percentile_cont(.5) WITHIN GROUP (ORDER BY ack_seconds) AS acknowledge_p50_seconds,
+               percentile_cont(.95) WITHIN GROUP (ORDER BY ack_seconds) AS acknowledge_p95_seconds,
+               percentile_cont(.99) WITHIN GROUP (ORDER BY ack_seconds) AS acknowledge_p99_seconds,
+               percentile_cont(.5) WITHIN GROUP (ORDER BY resolution_seconds) AS resolution_p50_seconds,
+               percentile_cont(.95) WITHIN GROUP (ORDER BY resolution_seconds) AS resolution_p95_seconds,
+               percentile_cont(.99) WITHIN GROUP (ORDER BY resolution_seconds) AS resolution_p99_seconds
+        FROM events
+        """,
+        _event_params(organizations, start_at, end_at, site_code),
+    ).fetchone()
+    return dict(row)
+
+
 def overview(user: dict[str, Any], days: int, site_code: str | None) -> dict[str, Any]:
     organizations = organization_ids(user)
     start_at, end_at, previous_start_at = _window(days)
@@ -103,6 +135,7 @@ def overview(user: dict[str, Any], days: int, site_code: str | None) -> dict[str
     with connection() as conn:
         current = _event_summary(conn, organizations, start_at, end_at, site_code)
         previous = _event_summary(conn, organizations, previous_start_at, start_at, site_code)
+        response_metrics = _response_metrics(conn, organizations, start_at, end_at, site_code)
 
         incident_conditions = [
             "i.organization_id=ANY(%s::uuid[])",
@@ -130,15 +163,15 @@ def overview(user: dict[str, Any], days: int, site_code: str | None) -> dict[str
         trend_rows = conn.execute(
             f"""
             WITH event_days AS (
-              SELECT date(e.detected_at) AS day,count(*)::int AS total,
+              SELECT date(e.detected_at AT TIME ZONE 'UTC') AS day,count(*)::int AS total,
                      count(*) FILTER (WHERE e.severity='critical')::int AS critical,
                      count(*) FILTER (WHERE e.status='resolved')::int AS resolved
               FROM safety.safety_events e WHERE {where}
-              GROUP BY date(e.detected_at)
+              GROUP BY date(e.detected_at AT TIME ZONE 'UTC')
             ), incident_days AS (
-              SELECT date(i.opened_at) AS day,count(*)::int AS incidents
+              SELECT date(i.opened_at AT TIME ZONE 'UTC') AS day,count(*)::int AS incidents
               FROM safety.incidents i WHERE {incident_where}
-              GROUP BY date(i.opened_at)
+              GROUP BY date(i.opened_at AT TIME ZONE 'UTC')
             )
             SELECT series.day::date AS day,COALESCE(e.total,0)::int AS total,
                    COALESCE(e.critical,0)::int AS critical,
@@ -149,7 +182,7 @@ def overview(user: dict[str, Any], days: int, site_code: str | None) -> dict[str
             LEFT JOIN incident_days i ON i.day=series.day
             ORDER BY series.day
             """,
-            [*params, *incident_params, start_at, end_at],
+            [*params, *incident_params, start_at.date(), end_at.date()],
         ).fetchall()
 
         event_type_rows = conn.execute(
@@ -235,8 +268,8 @@ def overview(user: dict[str, Any], days: int, site_code: str | None) -> dict[str
 
         heatmap_rows = conn.execute(
             f"""
-            SELECT EXTRACT(ISODOW FROM e.detected_at)::int AS weekday,
-                   EXTRACT(HOUR FROM e.detected_at)::int AS hour,
+            SELECT EXTRACT(ISODOW FROM e.detected_at AT TIME ZONE 'UTC')::int AS weekday,
+                   EXTRACT(HOUR FROM e.detected_at AT TIME ZONE 'UTC')::int AS hour,
                    count(*)::int AS total
             FROM safety.safety_events e WHERE {where}
             GROUP BY 1,2 ORDER BY 1,2
@@ -319,6 +352,7 @@ def overview(user: dict[str, Any], days: int, site_code: str | None) -> dict[str
             "reporting_cameras": int(current["reporting_cameras"]),
         },
         "trend": [dict(row) for row in trend_rows],
+        "response_metrics": response_metrics,
         "event_types": event_types,
         "severities": severities,
         "statuses": statuses,

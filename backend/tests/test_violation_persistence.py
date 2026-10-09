@@ -1,6 +1,10 @@
 from pathlib import Path
 from contextlib import contextmanager
 from unittest.mock import Mock, MagicMock
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
 
 from app.database import database
 from app.models.base import InferenceOutput
@@ -93,10 +97,11 @@ def test_classification_violation_creates_snapshot_candidate(monkeypatch):
     output = InferenceOutput(
         type="classification",
         prediction="Safe Walkway Violation",
-        confidence=0.88,
+        confidence=0.95,
         metrics={
-            "class_scores": {"Safe Walkway Violation": 0.88},
+            "class_scores": {"Safe Walkway Violation": 0.95},
             "predicted_classes": ["Safe Walkway Violation"],
+            "evidence_events": [{"class_name":"Safe Walkway Violation", "confidence":.95,"verified":True,"track_id":1}],
         },
     )
 
@@ -107,10 +112,10 @@ def test_classification_violation_creates_snapshot_candidate(monkeypatch):
     assert len(candidates) == 1
     assert candidates[0]["event_code"] == "SAFE_WALKWAY_VIOLATION"
     assert candidates[0]["snapshot_url"] == "/results/walkway.jpg"
-    assert candidates[0]["confidence"] == 0.88
+    assert candidates[0]["confidence"] == 0.95
 
 
-def test_low_confidence_unsafe_classification_still_creates_alert(monkeypatch):
+def test_unverified_low_confidence_unsafe_classification_never_creates_alert(monkeypatch):
     monkeypatch.setattr(
         "app.services.inference_service._save_video_snapshot",
         lambda *_args: "/results/unsafe.jpg",
@@ -126,8 +131,7 @@ def test_low_confidence_unsafe_classification_still_creates_alert(monkeypatch):
         output, _video(), "VideoMAE", "/api/videos/7/stream", 45
     )
 
-    assert len(candidates) == 1
-    assert candidates[0]["confidence"] == 0.32
+    assert candidates == []
 
 
 def test_classification_uses_frame_image_when_snapshot_write_fails(monkeypatch):
@@ -138,15 +142,16 @@ def test_classification_uses_frame_image_when_snapshot_write_fails(monkeypatch):
     output = InferenceOutput(
         type="classification",
         prediction="Safe Walkway Violation",
-        confidence=0.8,
-        metrics={"class_scores": {"Safe Walkway Violation": 0.8}},
+        confidence=0.95,
+        metrics={"class_scores": {"Safe Walkway Violation": 0.95},
+                 "evidence_events":[{"class_name":"Safe Walkway Violation","confidence":.95,"verified":True,"track_id":1,"frame_index":50}]},
     )
 
     candidates = _build_violation_candidates(
         output, _video(), "VideoMAE", "/api/videos/7/stream", 46
     )
 
-    assert candidates[0]["snapshot_url"] == "/api/videos/7/thumbnail?frame_index=125"
+    assert candidates[0]["snapshot_url"] == "/api/videos/7/thumbnail?frame_index=50"
     assert output.metrics["evidence_events"][0]["image"] == candidates[0]["snapshot_url"]
 
 
@@ -226,3 +231,45 @@ def test_complete_inference_uses_cursor_for_batch_inserts(monkeypatch):
 
     assert cursor.executemany.call_count == 2
     conn.commit.assert_called_once()
+
+
+def test_retiring_false_vest_events_is_scoped_and_preserves_reviewed_decisions(monkeypatch):
+    conn = Mock()
+    @contextmanager
+    def fake_connection():
+        yield conn
+    monkeypatch.setattr(database, 'connection', fake_connection)
+    camera_id = uuid4()
+    database.retire_obsolete_demo_events(camera_id, '2_tr14.mp4', 'SUSPECTED_NO_VEST', [], model_name='RF-DETR')
+    query, parameters = conn.execute.call_args.args
+    assert parameters == ('SUSPECTED_NO_VEST', camera_id, '2_tr14.mp4', 'RF-DETR', [])
+    assert "e.status = 'new'" in query
+    assert "e.camera_id = %s" in query and "e.raw_payload->>'source_video' = %s" in query
+    assert 'e.id <> ALL' in query  # Keep current, valid vest warnings.
+
+
+@pytest.mark.parametrize('save_succeeds', [True, False])
+def test_empty_corrected_ppe_result_retires_stale_vest_events_only_after_successful_save(monkeypatch, save_succeeds):
+    from app.services import inference_service as service
+    output = InferenceOutput(type='detection', prediction='Person', confidence=.9,
+        metrics={'pipeline_version':service.PPE_PIPELINE_VERSION,'evidence_events':[],'fps':25})
+    spec = SimpleNamespace(name='RF-DETR', weight_path=None)
+    camera_id = uuid4()
+    monkeypatch.setattr(service.registry, 'get_spec', lambda _: spec)
+    monkeypatch.setattr(service.registry, 'get_adapter', lambda _: (spec, SimpleNamespace(infer=lambda *_: output)))
+    monkeypatch.setattr(service, '_start_history', lambda *_: (service.PersistenceContext(91,camera_id,'CAM-03'),True))
+    complete = Mock(side_effect=None if save_succeeds else RuntimeError('Database unavailable'))
+    retire, mark = Mock(), Mock()
+    monkeypatch.setattr(database, 'complete_inference', complete)
+    monkeypatch.setattr(database, 'retire_obsolete_demo_events', retire)
+    monkeypatch.setattr(database, 'mark_events_persisted', mark)
+    result = service._run_inference_uncached(_video(), 'RF-DETR', 'CAM-03', None)
+    assert result.persisted is save_succeeds
+    if save_succeeds:
+        assert retire.call_count == 2
+        retire.assert_any_call(camera_id, 'camera-test.mp4', 'SUSPECTED_NO_VEST', (), model_name='RF-DETR')
+        retire.assert_any_call(camera_id, 'camera-test.mp4', 'SUSPECTED_NO_HELMET', (), model_name='RF-DETR')
+        mark.assert_called_once_with(91)
+    else:
+        retire.assert_not_called()
+        mark.assert_not_called()

@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity, AlertTriangle, Building2, Camera, CheckCircle2, ChevronDown,
   ChevronRight, CircleDot, Cpu, Edit3, Eye, Filter, Gauge, Grid2X2,
@@ -9,6 +11,7 @@ import {
 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { readAuthSession, userPermissions } from '@/lib/auth';
+import { cameraDemoVideo, CAMERA_DEMO_PRESETS } from '@/lib/demo-cameras';
 import styles from './cameras-management.module.css';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -25,7 +28,7 @@ type CameraItem = {
   deployment_count:number; health_status:DeviceStatus|null; latest_latency_ms:number|null;
   latest_packet_loss_pct:number|null; updated_at:string;
 };
-type DemoVideo = { id:number; labels:string[]; stream_url:string };
+type DemoVideo = { id:number; filename:string; labels:string[]; stream_url:string };
 type Summary = { sites:number; zones:number; cameras:number; online:number; offline:number; warning:number; maintenance:number; disabled:number; restricted_zones:number };
 type Infrastructure = { sites:Site[]; zones:Zone[]; cameras:CameraItem[]; summary:Summary };
 type HealthSample = { id:number; status:DeviceStatus; latency_ms:number|null; fps:number|null; packet_loss_pct:number|null; cpu_usage_pct:number|null; gpu_usage_pct:number|null; temperature_c:number|null; sampled_at:string };
@@ -97,8 +100,8 @@ export default function CamerasManagement() {
     if(!quiet)setLoading(true); setError('');
     try {
       const [response,videosResponse]=await Promise.all([
-        fetch(API_BASE+'/api/infrastructure',{headers:headers()}),
-        fetch(API_BASE+'/api/videos/test',{headers:headers()}),
+        authenticatedFetch(API_BASE+'/api/infrastructure',{headers:headers()}),
+        authenticatedFetch(API_BASE+'/api/videos/test',{headers:headers()}),
       ]);
       const payload=await response.json().catch(()=>null);
       if(!response.ok)throw new Error(apiError(payload));
@@ -115,19 +118,13 @@ export default function CamerasManagement() {
   useEffect(()=>{
     if(!data.cameras.length||!demoVideos.length)return;
     const controller=new AbortController(),created:string[]=[];
-    const preferred:Record<string,string>={
-      'CAM-01':'Safe Walkway Violation','CAM-02':'Carrying Overload with Forklift',
-      'CAM-03':'Opened Panel Cover','CAM-04':'Unauthorized Intervention',
-      'CAM-05':'Safe Walkway Violation','CAM-06':'Carrying Overload with Forklift',
-      'CAM-07':'Safe Carrying','CAM-08':'Unauthorized Intervention',
-      'CAM-09':'Authorized Intervention',
-    };
-    void Promise.all(data.cameras.map(async(camera,index)=>{
+    const curatedFiles = new Set(CAMERA_DEMO_PRESETS.flatMap(item => item.filenames));
+    void Promise.all(data.cameras.map(async(camera)=>{
       if(camera.snapshot_url)return null;
-      const label=preferred[camera.code];
-      const video=demoVideos.find(item=>label&&item.labels.includes(label))||demoVideos[index%demoVideos.length];
+      const video=cameraDemoVideo(demoVideos,camera.code)||demoVideos.find(item=>curatedFiles.has(item.filename));
+      if(!video)return null;
       try{
-        const response=await fetch(API_BASE+'/api/videos/'+video.id+'/thumbnail',{headers:headers(),signal:controller.signal});
+        const response=await authenticatedFetch(API_BASE+'/api/videos/'+video.id+'/thumbnail',{headers:headers(),signal:controller.signal});
         if(!response.ok)return null;
         const url=URL.createObjectURL(await response.blob());created.push(url);
         return [camera.id,url] as const;
@@ -141,7 +138,7 @@ export default function CamerasManagement() {
 
   const loadDetail=useCallback(async(id:string)=>{
     if(!id){setDetail(null);return;} setDetailLoading(true);
-    try{const response=await fetch(API_BASE+'/api/infrastructure/cameras/'+id,{headers:headers()}); const payload=await response.json().catch(()=>null); if(!response.ok)throw new Error(apiError(payload)); setDetail(payload as CameraDetail);}
+    try{const response=await authenticatedFetch(API_BASE+'/api/infrastructure/cameras/'+id,{headers:headers()}); const payload=await response.json().catch(()=>null); if(!response.ok)throw new Error(apiError(payload)); setDetail(payload as CameraDetail);}
     catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể tải chi tiết camera.');}
     finally{setDetailLoading(false);}
   },[]);
@@ -167,11 +164,11 @@ export default function CamerasManagement() {
       else if(modal.type==='zone'){payload={...zoneForm,description:zoneForm.description||null};base='/zones';}
       else {payload={...cameraForm,zone_id:cameraForm.zone_id||null,snapshot_url:cameraForm.snapshot_url||null,manufacturer:cameraForm.manufacturer||null,model:cameraForm.model||null,ip_address:cameraForm.ip_address||null,latitude:numberOrNull(cameraForm.latitude),longitude:numberOrNull(cameraForm.longitude),fps:numberOrNull(cameraForm.fps),resolution_width:numberOrNull(cameraForm.resolution_width),resolution_height:numberOrNull(cameraForm.resolution_height),installed_at:cameraForm.installed_at||null};base='/cameras';}
       const path='/api/infrastructure'+base+(modal.mode==='edit'?'/'+modal.id+'/update':'');
-      const response=await fetch(API_BASE+path,{method:'POST',headers:headers(),body:JSON.stringify(payload)});const result=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(result));
+      const response=await authenticatedFetch(API_BASE+path,{method:'POST',headers:headers(),body:JSON.stringify(payload)});const result=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(result));
       setModal(null);notify((result as {message?:string})?.message||'Đã lưu thay đổi');await loadData(true);if(selectedId)await loadDetail(selectedId);
     }catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể lưu dữ liệu.');}finally{setBusy(false);}
   }
-  async function changeStatus(next:DeviceStatus){if(!detail)return;setBusy(true);try{const response=await fetch(API_BASE+'/api/infrastructure/cameras/'+detail.id+'/status',{method:'POST',headers:headers(),body:JSON.stringify({status:next})});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(payload));notify('Đã đổi trạng thái camera');await loadData(true);await loadDetail(detail.id);}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể đổi trạng thái.');}finally{setBusy(false);}}
+  async function changeStatus(next:DeviceStatus){if(!detail)return;setBusy(true);try{const response=await authenticatedFetch(API_BASE+'/api/infrastructure/cameras/'+detail.id+'/status',{method:'POST',headers:headers(),body:JSON.stringify({status:next})});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(payload));notify('Đã đổi trạng thái camera');await loadData(true);await loadDetail(detail.id);}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể đổi trạng thái.');}finally{setBusy(false);}}
 
   const currentSite=scope.startsWith('site:')?data.sites.find(item=>item.id===scope.slice(5)):null;
   const scopeTitle=scope==='all'?'Tất cả camera':scope==='unassigned'?'Chưa gán khu vực':currentSite?.name||data.zones.find(item=>item.id===scope.slice(5))?.name||'Camera';

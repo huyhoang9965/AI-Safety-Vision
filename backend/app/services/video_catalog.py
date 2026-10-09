@@ -3,11 +3,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 
 from app.database import database
 from app.services.manifest import ManifestVideo, get_manifest_video, load_test_manifest
 
 logger = logging.getLogger(__name__)
+_stream_catalog_lock = Lock()
+_stream_catalog: dict[int, tuple[float, "ResolvedVideo"]] = {}
 
 
 @dataclass(frozen=True)
@@ -26,7 +30,7 @@ def _manifest_by_path() -> dict[str, ManifestVideo]:
     return {str(video.filepath).lower(): video for video in load_test_manifest()}
 
 
-def list_test_videos() -> list[ResolvedVideo]:
+def _list_test_videos() -> list[ResolvedVideo]:
     manifest_videos = load_test_manifest()
     if database.is_database_available():
         try:
@@ -68,6 +72,29 @@ def list_test_videos() -> list[ResolvedVideo]:
         )
         for video in manifest_videos
     ]
+
+
+def list_test_videos() -> list[ResolvedVideo]:
+    videos = _list_test_videos()
+    with _stream_catalog_lock:
+        _stream_catalog.clear()
+        _stream_catalog.update({video.id: (monotonic() + 300, video) for video in videos})
+    return videos
+
+
+def resolve_stream_video(video_id: int) -> ResolvedVideo | None:
+    # Native range requests must not reconnect to PostgreSQL for every chunk.
+    with _stream_catalog_lock:
+        cached = _stream_catalog.get(video_id)
+        if cached and cached[0] > monotonic():
+            return cached[1]
+    video = resolve_video(video_id)
+    if video:
+        with _stream_catalog_lock:
+            if len(_stream_catalog) >= 200:
+                _stream_catalog.clear()
+            _stream_catalog[video_id] = (monotonic() + 300, video)
+    return video
 
 
 def resolve_video(video_id: int) -> ResolvedVideo | None:

@@ -1,5 +1,7 @@
 'use client';
 
+import { authenticatedFetch } from '@/lib/auth';
+
 import {
   Activity,
   AlertOctagon,
@@ -31,8 +33,9 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readAuthSession, userPermissions } from '@/lib/auth';
+import { useSearchParams } from 'next/navigation';
 import styles from './alerts-management.module.css';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -53,6 +56,7 @@ type AlertItem = {
   confidence: number | null;
   object_count: number;
   detected_at: string;
+  overdue: boolean;
   acknowledged_at: string | null;
   resolved_at: string | null;
   resolution_note: string | null;
@@ -72,7 +76,11 @@ type AlertItem = {
 
 type Summary = {
   total: number;
+  overdue: number;
   new: number;
+  critical_new?: number;
+  high_new?: number;
+  acknowledgeable_new?: number;
   acknowledged: number;
   resolved: number;
   dismissed: number;
@@ -97,10 +105,11 @@ type AlertResponse = {
   };
 };
 
-type ActionType = 'acknowledge' | 'resolve' | 'dismiss' | 'incident';
+type ActionType = 'acknowledge' | 'acknowledge-all' | 'resolve' | 'dismiss' | 'incident';
 
 const EMPTY_SUMMARY: Summary = {
   total: 0,
+  overdue: 0,
   new: 0,
   acknowledged: 0,
   resolved: 0,
@@ -167,6 +176,13 @@ function apiError(payload: unknown): string {
 }
 
 export default function AlertsManagement() {
+  const searchParams = useSearchParams();
+  const [overdueOnly, setOverdueOnly] = useState(searchParams.get('overdue') === 'true');
+  useEffect(() => {
+    const requested = searchParams.get('overdue') === 'true';
+    setOverdueOnly(requested);
+    if (requested) { setStatus('all'); setPeriod('all'); setOffset(0); }
+  }, [searchParams]);
   const [data, setData] = useState<AlertResponse>({
     items: [],
     total: 0,
@@ -192,6 +208,8 @@ export default function AlertsManagement() {
   const [actionBusy, setActionBusy] = useState(false);
   const [toast, setToast] = useState('');
   const [mobileDetail, setMobileDetail] = useState(false);
+  const actionInFlight = useRef(false);
+  const loadVersion = useRef(0);
 
   const stored = typeof window === 'undefined' ? null : readAuthSession();
   const permissions = useMemo(
@@ -206,31 +224,39 @@ export default function AlertsManagement() {
       offset: String(offset),
     });
     if (search) params.set('search', search);
-    if (status !== 'all') params.set('status', status);
+    if (overdueOnly) params.set('overdue', 'true');
+    params.set('status', status === 'all' ? 'new' : status);
     if (severity !== 'all') params.set('severity', severity);
     if (eventType !== 'all') params.set('event_type', eventType);
     if (site !== 'all') params.set('site', site);
     return params.toString();
-  }, [eventType, offset, period, search, severity, site, status]);
+  }, [eventType, offset, period, search, severity, site, status, overdueOnly]);
 
   const loadAlerts = useCallback(async (quiet = false) => {
+    const version = ++loadVersion.current;
     if (!quiet) setLoading(true);
     setError('');
     try {
-      const response = await fetch(API_BASE + '/api/alerts?' + queryString, {
+      const response = await authenticatedFetch(API_BASE + '/api/alerts?' + queryString, {
         headers: requestHeaders(),
       });
       const payload = await response.json().catch(() => null);
+      if (version !== loadVersion.current) return;
       if (!response.ok) throw new Error(apiError(payload));
       const next = payload as AlertResponse;
       setData(next);
+      if (!next.items.length) setMobileDetail(false);
+      if (next.offset > 0 && next.offset >= next.total) {
+        setOffset(Math.max(0, Math.floor(Math.max(0, next.total - 1) / next.limit) * next.limit));
+      }
       setSelectedId(current => next.items.some(item => item.id === current)
         ? current
         : next.items[0]?.id || '');
     } catch (requestError) {
+      if (version !== loadVersion.current) return;
       setError(requestError instanceof Error ? requestError.message : 'Không thể tải cảnh báo.');
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current) setLoading(false);
     }
   }, [queryString]);
 
@@ -239,16 +265,32 @@ export default function AlertsManagement() {
   }, [loadAlerts]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || action) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void loadAlerts(true);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [autoRefresh, loadAlerts]);
+  }, [autoRefresh, loadAlerts, action]);
+
+  useEffect(() => {
+    if (!action) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !actionInFlight.current) setAction(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [action]);
 
   const selected = data.items.find(item => item.id === selectedId) || null;
   const page = Math.floor(offset / data.limit) + 1;
   const totalPages = Math.max(1, Math.ceil(data.total / data.limit));
+  const pendingCount = data.summary.acknowledgeable_new ?? data.summary.new;
+  const isAcknowledgement = action === 'acknowledge' || action === 'acknowledge-all';
+  const isQueue = status === 'all' || status === 'new';
+  const queueEmpty = isQueue && !overdueOnly && data.summary.new === 0;
+  const listTitle = overdueOnly ? 'Cảnh báo quá hạn' : isQueue ? 'Hàng đợi cảnh báo'
+    : status === 'acknowledged' ? 'Cảnh báo đã xác nhận'
+    : status === 'resolved' ? 'Cảnh báo đã xử lý' : 'Cảnh báo đã đánh dấu sai';
 
   const submitSearch = (event: FormEvent) => {
     event.preventDefault();
@@ -263,7 +305,8 @@ export default function AlertsManagement() {
     setSeverity('all');
     setEventType('all');
     setSite('all');
-    setPeriod('24h');
+    setOverdueOnly(false);
+    setPeriod('all');
     setOffset(0);
   };
 
@@ -274,13 +317,16 @@ export default function AlertsManagement() {
 
   const submitAction = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selected || !action) return;
+    if (!action || actionInFlight.current || (action !== 'acknowledge-all' && !selected)) return;
+    actionInFlight.current = true;
+    ++loadVersion.current;
     setActionBusy(true);
     try {
       const body = action === 'incident'
-        ? { title: note.trim() || selected.title }
+        ? { title: note.trim() || selected!.title }
         : { note: note.trim() || null };
-      const response = await fetch(API_BASE + '/api/alerts/' + selected.id + '/' + action, {
+      const path = action === 'acknowledge-all' ? 'acknowledge-all' : selected!.id + '/' + action;
+      const response = await authenticatedFetch(API_BASE + '/api/alerts/' + path, {
         method: 'POST',
         headers: requestHeaders(),
         body: JSON.stringify(body),
@@ -291,9 +337,12 @@ export default function AlertsManagement() {
       setAction(null);
       setNote('');
       await loadAlerts(true);
+      if (action === 'acknowledge-all') setOffset(0);
+      window.dispatchEvent(new Event('safety-alerts-updated'));
     } catch (requestError) {
       setToast(requestError instanceof Error ? requestError.message : 'Không thể cập nhật cảnh báo.');
     } finally {
+      actionInFlight.current = false;
       setActionBusy(false);
     }
   };
@@ -304,13 +353,14 @@ export default function AlertsManagement() {
       return;
     }
     const rows = [
-      ['Mã', 'Loại', 'Tiêu đề', 'Mức độ', 'Trạng thái', 'Camera', 'Khu vực', 'Thời gian'],
+      ['Mã', 'Loại', 'Tiêu đề', 'Mức độ', 'Trạng thái', 'Quá hạn', 'Camera', 'Khu vực', 'Thời gian'],
       ...data.items.map(item => [
         item.id,
         item.event_name,
         item.title,
         severityLabels[item.severity],
         statusLabels[item.status],
+        item.overdue ? 'Có' : 'Không',
         item.camera_code,
         item.zone_name || item.site_name,
         fullDate(item.detected_at),
@@ -343,6 +393,11 @@ export default function AlertsManagement() {
           <button type="button" className={autoRefresh ? styles.liveButton : undefined} onClick={() => setAutoRefresh(value => !value)}>
             <i /> {autoRefresh ? 'Tự động 5 giây' : 'Đã tạm dừng'}
           </button>
+          {permissions.has('event.acknowledge') && (
+            <button type="button" className={styles.bulkButton} onClick={() => openAction('acknowledge-all')} disabled={loading || actionBusy || !!error || pendingCount === 0}>
+              <UserCheck size={15} /> Xác nhận tất cả ({pendingCount})
+            </button>
+          )}
           <button type="button" onClick={() => void loadAlerts()} disabled={loading}><RefreshCw className={loading ? styles.spinning : undefined} size={15} /> Làm mới</button>
           <button type="button" onClick={exportCsv}><Download size={15} /> Xuất CSV</button>
         </div>
@@ -352,7 +407,7 @@ export default function AlertsManagement() {
         <article>
           <span className={styles.redIcon}><AlertOctagon size={19} /></span>
           <div><small>Đang chờ xử lý</small><strong>{data.summary.new}</strong></div>
-          <em>{data.summary.critical_open} nghiêm trọng</em>
+          <em>{data.summary.critical_new ?? 0} nghiêm trọng</em>
         </article>
         <article>
           <span className={styles.orangeIcon}><UserCheck size={19} /></span>
@@ -362,7 +417,7 @@ export default function AlertsManagement() {
         <article>
           <span className={styles.blueIcon}><BellRing size={19} /></span>
           <div><small>Phát hiện hôm nay</small><strong>{data.summary.today}</strong></div>
-          <em>{data.summary.high_open} mức cao đang mở</em>
+          <em>{data.summary.high_new ?? 0} mức cao chưa xác nhận</em>
         </article>
         <article>
           <span className={styles.greenIcon}><TimerReset size={19} /></span>
@@ -371,19 +426,26 @@ export default function AlertsManagement() {
         </article>
       </section>
 
+      {!error && data.summary.overdue > 0 && <div className={styles.overdueNotice} role="alert">
+        <Clock3 size={20} />
+        <div><strong>{data.summary.overdue} cảnh báo quá hạn xử lý</strong><p>Đã quá 24 giờ kể từ khi phát hiện mà chưa được xác nhận. Xác nhận cảnh báo để kết thúc nhắc quá hạn.</p></div>
+        <button type="button" onClick={() => { setOverdueOnly(true); setStatus('all'); setPeriod('all'); setSearch(''); setSearchInput(''); setSeverity('all'); setEventType('all'); setSite('all'); setOffset(0); }}>Xem cảnh báo</button>
+      </div>}
+
       <section className={styles.filterPanel}>
         <div className={styles.statusTabs}>
           {([
-            ['all', 'Tất cả', data.summary.total],
+            ['all', 'Tất cả', data.summary.new],
             ['new', 'Mới', data.summary.new],
             ['acknowledged', 'Đã xác nhận', data.summary.acknowledged],
             ['resolved', 'Đã xử lý', data.summary.resolved],
             ['dismissed', 'Cảnh báo sai', data.summary.dismissed],
           ] as const).map(tab => (
-            <button key={tab[0]} type="button" className={status === tab[0] ? styles.activeTab : undefined} onClick={() => { setStatus(tab[0]); setOffset(0); }}>
+            <button key={tab[0]} type="button" className={!overdueOnly && status === tab[0] ? styles.activeTab : undefined} onClick={() => { setOverdueOnly(false); setStatus(tab[0]); setOffset(0); }}>
               {tab[1]} <span>{tab[2]}</span>
             </button>
           ))}
+          <button type="button" className={overdueOnly ? styles.activeTab : undefined} onClick={() => { setOverdueOnly(true); setStatus('all'); setPeriod('all'); setOffset(0); }}>Quá hạn <span>{data.summary.overdue || 0}</span></button>
         </div>
         <div className={styles.filters}>
           <form className={styles.search} onSubmit={submitSearch}>
@@ -407,8 +469,8 @@ export default function AlertsManagement() {
         <section className={styles.workspace}>
           <div className={styles.listPanel}>
             <div className={styles.listHeading}>
-              <div><strong>Hàng đợi cảnh báo</strong><span>{data.total} kết quả phù hợp</span></div>
-              <span><Activity size={13} /> Ưu tiên theo trạng thái và rủi ro</span>
+              <div><strong>{listTitle}</strong><span>{data.total} kết quả phù hợp</span></div>
+              <span><Activity size={13} /> {isQueue ? 'Các cảnh báo chưa xác nhận' : 'Lịch sử cảnh báo'}</span>
             </div>
 
             <div className={styles.alertList}>
@@ -424,7 +486,7 @@ export default function AlertsManagement() {
                   <span className={styles.severityBar} data-severity={item.severity} />
                   <span className={styles.alertIcon} data-severity={item.severity}><ShieldAlert size={17} /></span>
                   <span className={styles.alertMain}>
-                    <span><strong>{item.title}</strong><em data-status={item.status}>{statusLabels[item.status]}</em></span>
+                    <span><strong>{item.title}</strong><em data-status={item.status}>{statusLabels[item.status]}</em>{item.overdue && <em className={styles.overdueBadge}>Quá hạn</em>}</span>
                     <small>{item.event_name} · {item.camera_code} · {item.zone_name || item.site_name}</small>
                     <span className={styles.alertMeta}><span><Clock3 size={11} /> {relativeTime(item.detected_at)}</span><span><Camera size={11} /> {item.camera_name}</span>{item.confidence !== null && <span><Sparkles size={11} /> {Math.round(item.confidence * 100)}%</span>}</span>
                   </span>
@@ -434,8 +496,8 @@ export default function AlertsManagement() {
               )) : (
                 <div className={styles.emptyState}>
                   <span><CheckCircle2 size={27} /></span>
-                  <strong>Không có cảnh báo phù hợp</strong>
-                  <p>Hệ thống không tạo dữ liệu minh họa. Cảnh báo thật từ bảng <code>safety.safety_events</code> sẽ xuất hiện tại đây.</p>
+                  <strong>{queueEmpty ? 'Không còn cảnh báo chờ xác nhận' : 'Không có cảnh báo phù hợp'}</strong>
+                  <p>{queueEmpty ? 'Các cảnh báo đã xác nhận được lưu tại mục “Đã xác nhận”.' : 'Không có cảnh báo phù hợp với bộ lọc hiện tại.'}</p>
                   <button type="button" onClick={resetFilters}>Xóa bộ lọc</button>
                 </div>
               )}
@@ -444,8 +506,8 @@ export default function AlertsManagement() {
             <div className={styles.pagination}>
               <span>Trang {page}/{totalPages} · {data.total} cảnh báo</span>
               <div>
-                <button type="button" disabled={offset === 0} onClick={() => setOffset(value => Math.max(0, value - data.limit))}><ChevronLeft size={14} /></button>
-                <button type="button" disabled={offset + data.limit >= data.total} onClick={() => setOffset(value => value + data.limit)}><ChevronRight size={14} /></button>
+                <button type="button" aria-label="Trang trước" disabled={loading || actionBusy || offset === 0} onClick={() => setOffset(value => Math.max(0, value - data.limit))}><ChevronLeft size={14} /></button>
+                <button type="button" aria-label="Trang sau" disabled={loading || actionBusy || offset + data.limit >= data.total} onClick={() => setOffset(value => value + data.limit)}><ChevronRight size={14} /></button>
               </div>
             </div>
           </div>
@@ -457,6 +519,7 @@ export default function AlertsManagement() {
                   <div><span data-severity={selected.severity}>{severityLabels[selected.severity]}</span><em data-status={selected.status}>{statusLabels[selected.status]}</em></div>
                   <button type="button" onClick={() => setMobileDetail(false)}><X size={16} /></button>
                 </div>
+                {selected.overdue && <p className={styles.overdueDetail}><Clock3 size={15} /> Quá hạn: cảnh báo chưa được xác nhận sau 24 giờ.</p>}
                 <div className={styles.detailTitle}>
                   <span><ShieldAlert size={20} /></span>
                   <div><small>{selected.event_code}</small><h2>{selected.title}</h2><p>{selected.event_name}</p></div>
@@ -522,20 +585,21 @@ export default function AlertsManagement() {
         </section>
       )}
 
-      {action && selected && (
-        <div className={styles.modalBackdrop} role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) setAction(null); }}>
-          <form className={styles.actionModal} onSubmit={submitAction}>
+      {action && (selected || action === 'acknowledge-all') && (
+        <div className={styles.modalBackdrop} role="presentation" onMouseDown={event => { if (event.currentTarget === event.target && !actionInFlight.current) setAction(null); }}>
+          <form className={styles.actionModal} onSubmit={submitAction} role="dialog" aria-modal="true" aria-labelledby="alert-action-title">
             <div className={styles.modalHeading}>
-              <span>{action === 'acknowledge' ? <UserCheck size={19} /> : action === 'resolve' ? <CheckCircle2 size={19} /> : action === 'dismiss' ? <XCircle size={19} /> : <FileWarning size={19} />}</span>
-              <div><strong>{action === 'acknowledge' ? 'Xác nhận cảnh báo' : action === 'resolve' ? 'Hoàn tất xử lý' : action === 'dismiss' ? 'Đánh dấu cảnh báo sai' : 'Tạo phiếu sự cố'}</strong><small>{selected.camera_code} · {selected.title}</small></div>
-              <button type="button" onClick={() => setAction(null)}><X size={16} /></button>
+              <span>{isAcknowledgement ? <UserCheck size={19} /> : action === 'resolve' ? <CheckCircle2 size={19} /> : action === 'dismiss' ? <XCircle size={19} /> : <FileWarning size={19} />}</span>
+              <div><strong id="alert-action-title">{action === 'acknowledge-all' ? 'Xác nhận tất cả vi phạm' : action === 'acknowledge' ? 'Xác nhận cảnh báo' : action === 'resolve' ? 'Hoàn tất xử lý' : action === 'dismiss' ? 'Đánh dấu cảnh báo sai' : 'Tạo phiếu sự cố'}</strong><small>{action === 'acknowledge-all' ? `${pendingCount} cảnh báo mới có thể xác nhận` : `${selected!.camera_code} · ${selected!.title}`}</small></div>
+              <button type="button" aria-label="Đóng hộp xác nhận" disabled={actionBusy} onClick={() => setAction(null)}><X size={16} /></button>
             </div>
+            {action === 'acknowledge-all' && <p className={styles.bulkDescription}>Xác nhận toàn bộ cảnh báo <strong>Mới</strong> trong các tổ chức bạn có quyền xác nhận, bao gồm mọi trang và các cảnh báo đang bị bộ lọc ẩn. Cảnh báo được chuyển sang mục “Đã xác nhận” và kết thúc nhắc quá hạn. Số lượng thực tế sẽ được thông báo sau khi hoàn tất.</p>}
             <label>
-              <span>{action === 'incident' ? 'Tiêu đề phiếu sự cố' : action === 'acknowledge' ? 'Ghi chú xác nhận (không bắt buộc)' : 'Ghi chú xử lý'}</span>
-              <textarea value={note} onChange={event => setNote(event.target.value)} required={action === 'resolve' || action === 'dismiss'} placeholder={action === 'dismiss' ? 'Nhập lý do xác định đây là cảnh báo sai...' : action === 'incident' ? selected.title : 'Mô tả hành động đã thực hiện...'} />
+              <span>{action === 'incident' ? 'Tiêu đề phiếu sự cố' : isAcknowledgement ? 'Ghi chú xác nhận (không bắt buộc)' : 'Ghi chú xử lý'}</span>
+              <textarea value={note} onChange={event => setNote(event.target.value)} disabled={actionBusy} maxLength={action === 'incident' ? 250 : 2000} required={action === 'resolve' || action === 'dismiss'} placeholder={action === 'dismiss' ? 'Nhập lý do xác định đây là cảnh báo sai...' : action === 'incident' ? selected!.title : 'Mô tả hành động đã thực hiện...'} />
             </label>
             <div className={styles.modalActions}>
-              <button type="button" onClick={() => setAction(null)}>Hủy</button>
+              <button type="button" disabled={actionBusy} onClick={() => setAction(null)}>Hủy</button>
               <button type="submit" disabled={actionBusy}>{actionBusy ? <LoaderCircle className={styles.spinning} size={14} /> : <Check size={14} />} Xác nhận thao tác</button>
             </div>
           </form>
