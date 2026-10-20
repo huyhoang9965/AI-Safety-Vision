@@ -1,5 +1,15 @@
 # AI Safety Monitoring — Real Model Demo
 
+## Tin nhắn & yêu cầu nội bộ
+
+Trong dashboard, chọn **Tin nhắn & yêu cầu** (`/dashboard/messages`) hoặc biểu tượng tin nhắn trên thanh đầu trang. Nhân viên giám sát và quản trị viên có thể chọn người nhận trong cùng tổ chức, nhắn tin hai chiều và gửi yêu cầu công việc kèm loại yêu cầu, mức ưu tiên và hạn xử lý. Hội thoại hiển thị trạng thái đã gửi/đã đọc, tải tin nhắn cũ và giữ bản nháp khi gửi lỗi.
+
+Người nhận có thể **tiếp nhận → hoàn thành**, hoặc **từ chối** kèm lý do; người gửi có thể **hủy** yêu cầu còn mở. Thay đổi trạng thái được ghi vào hội thoại. Tab **Yêu cầu** hỗ trợ lọc yêu cầu gửi đến/tôi đã gửi, trạng thái và quá hạn; hiển thị tối đa 200 yêu cầu gần nhất. Giao diện thích ứng máy tính và điện thoại, có tìm kiếm hội thoại, bộ lọc chưa đọc và bảng thông tin người trao đổi.
+
+Backend tự áp dụng `backend/migrations/006_team_messaging.sql` khi khởi động. Migration thêm quyền `messaging.use` cho `super_admin`, `org_admin`, `safety_manager`, `operator`, `camera_employee` và ba bảng `safety.team_conversations`, `safety.team_messages`, `safety.team_requests`. Migration `007_camera_employee_messaging.sql` bổ sung quyền cho vai trò Nhân viên camera trên các bản đã chạy migration 006 cũ; script tạo tài khoản cũng giữ quyền này khi chạy lại. Nhân viên camera chỉ cần `camera.view` và `messaging.use`, không cần quyền xem trang tổng quan. Tải lại trang sau khi backend khởi động để cập nhật quyền tài khoản. API `/api/messaging/*` dùng Bearer token hiện có, kiểm tra quyền và tư cách thành viên tổ chức; chỉ hai người tham gia được xem và thao tác trong hội thoại. Tin nhắn/yêu cầu lưu trong PostgreSQL; không dùng dữ liệu giả khi backend mất kết nối. Tin trong hội thoại được cập nhật mỗi 5 giây; hộp thư/yêu cầu mỗi 10 giây và số chưa đọc trên thanh đầu trang mỗi 15 giây khi tab đang hiển thị. Đây là trao đổi nội bộ riêng biệt với trợ lý AI.
+
+Kiểm tra: trong `web`, chạy `npm run typecheck` và `npx playwright test tests/team-messaging.spec.ts --workers=1`. Trong `backend`, chạy `..\.venv\Scripts\python.exe -m pytest tests/test_messaging.py -q`; đặt `TEST_MESSAGING_SQL=1` để chạy thêm luồng hai tài khoản trên PostgreSQL với các bảng tạm riêng của phiên, không gửi tin đến người dùng thật.
+
 Module demo thật gồm:
 
 ```text
@@ -14,6 +24,20 @@ FastAPI backend (:8000)
 ```
 
 Landing page `/` không bị thay đổi. Demo chỉ sử dụng video thật có `final_split=test` trong `outputs/video_audit/video_manifest_FINAL_kaggle.csv`.
+
+## Hồ sơ cá nhân trong dashboard
+
+Sau khi đăng nhập, bấm tên/ảnh tài khoản ở góc trên bên phải → **Hồ sơ cá nhân**, hoặc chọn mục cùng tên trên sidebar. Trang nằm tại `/dashboard/profile`, dùng layout dashboard và dữ liệu của tài khoản đang đăng nhập.
+
+- Chỉnh sửa họ tên, tên tài khoản, điện thoại, ngày sinh, giới tính, bộ phận, chức danh và giới thiệu.
+- Thay/xóa ảnh đại diện JPG, PNG hoặc WebP tối đa 5 MB; máy chủ kiểm tra ảnh và lưu bản PNG tối đa 512 × 512 trong `storage/avatars`.
+- Đổi mật khẩu sau khi xác minh mật khẩu hiện tại. Mật khẩu mới cần ít nhất 8 ký tự, khác mật khẩu hiện tại và không vượt quá giới hạn 72 byte của bcrypt. Thiết bị hiện tại nhận phiên mới; token làm mới của các phiên cũ bị thu hồi.
+- Tên và ảnh trên menu dashboard cập nhật ngay sau khi lưu. Hồ sơ được lưu trong PostgreSQL, vẫn còn khi tải lại trang.
+- Email đăng nhập, mã tài khoản và quyền truy cập chỉ hiển thị. Tài khoản được chỉnh sửa hồ sơ của chính mình, không cần quyền quản trị cấu hình hệ thống.
+
+API dùng Bearer token hiện có: `GET /api/auth/me`, `POST /api/auth/me`, `POST /api/auth/me/password`. Các endpoint cập nhật xác định người dùng từ token và không nhận ID tài khoản hay vai trò trong dữ liệu gửi lên. Ngày sinh, giới tính và giới thiệu được lưu trong `safety.users.preferences.profile`; các thiết lập khác được giữ lại, không cần migration mới.
+
+Kiểm thử: trong `backend`, chạy `..\.venv\Scripts\python.exe -m pytest tests/test_auth.py tests/test_profile.py -q`; trong `web`, chạy `npm run typecheck` và `npm run test:e2e -- tests/profile.spec.ts tests/auth-session.spec.ts --workers=1`.
 
 ## 1. Tạo PostgreSQL database
 

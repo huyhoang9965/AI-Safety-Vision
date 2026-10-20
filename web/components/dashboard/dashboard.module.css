@@ -333,6 +333,8 @@
 }
 
 .profileButton:hover { background: #f1f5f8; }
+.profileButton > span, .profileSummary > span { overflow: hidden; }
+.profileButton > span > img, .profileSummary > span > img { width: 100%; height: 100%; object-fit: cover; }
 .profileButton > span, .profileSummary > span {
   width: 31px;
   height: 31px;

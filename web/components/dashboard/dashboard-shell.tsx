@@ -21,6 +21,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageSquare,
   Radio,
   Search,
   Settings,
@@ -30,7 +31,9 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { defaultAppPath, logoutAccount, readAuthSession, restoreAuthSession, userPermissions, userRole, type ApiUser } from '@/lib/auth';
+import { AUTH_USER_UPDATED_EVENT, defaultAppPath, logoutAccount, readAuthSession, resolveAvatarUrl, restoreAuthSession, userPermissions, userRole, type ApiUser } from '@/lib/auth';
+import { DashboardAccountContext } from './dashboard-account';
+import { messagingApi, MESSAGING_UPDATED } from '@/lib/messaging';
 import styles from './dashboard.module.css';
 import AdminChatbot from './admin-chatbot';
 
@@ -49,6 +52,7 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
       { label: 'Giám sát trực tiếp', href: '/dashboard/live', icon: Radio },
       { label: 'Cảnh báo & vi phạm', href: '/dashboard/alerts', icon: Siren },
       { label: 'Quản lý sự cố', href: '/dashboard/incidents', icon: FileWarning },
+      { label: 'Tin nhắn & yêu cầu', href: '/dashboard/messages', icon: MessageSquare },
     ],
   },
   {
@@ -71,6 +75,10 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
       { label: 'Cấu hình hệ thống', href: '/dashboard/settings', icon: Settings },
     ],
   },
+  {
+    label: 'Tài khoản',
+    items: [{ label: 'Hồ sơ cá nhân', href: '/dashboard/profile', icon: CircleUserRound }],
+  },
 ];
 
 const allItems = navGroups.flatMap(group => group.items);
@@ -85,6 +93,7 @@ const routePermissions: Record<string, string> = {
   '/dashboard/reports': 'report.view',
   '/dashboard/users': 'user.view',
   '/dashboard/settings': 'settings.manage',
+  '/dashboard/messages': 'messaging.use',
 };
 
 function activeItem(pathname: string): NavItem {
@@ -105,12 +114,13 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
   const [notificationError, setNotificationError] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [messageUnread, setMessageUnread] = useState(0);
   const permissions = useMemo(() => user ? userPermissions(user) : new Set<string>(), [user]);
   const visibleGroups = useMemo(
     () => navGroups
       .map(group => ({
         ...group,
-        items: group.items.filter(item => permissions.has(routePermissions[item.href])),
+        items: group.items.filter(item => item.href === '/dashboard/profile' || permissions.has(routePermissions[item.href])),
       }))
       .filter(group => group.items.length > 0),
     [permissions],
@@ -126,7 +136,8 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
         return;
       }
       const requested = activeItem(pathname);
-      if (!userPermissions(session.user).has(routePermissions[requested.href])) {
+      const permission = routePermissions[requested.href];
+      if (permission && !userPermissions(session.user).has(permission)) {
         router.replace(defaultAppPath(session.user) || '/');
         return;
       }
@@ -134,6 +145,26 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
       setAuthReady(true);
     });
     return () => { cancelled = true; };
+  }, [pathname, router]);
+
+  useEffect(() => {
+    const updateAccount = () => {
+      const stored = readAuthSession();
+      if (!stored) { setUser(null); router.replace('/'); return; }
+      const permission = routePermissions[activeItem(pathname).href];
+      if (permission && !userPermissions(stored.session.user).has(permission)) {
+        setAuthReady(false);
+        router.replace(defaultAppPath(stored.session.user) || '/');
+        return;
+      }
+      setUser(stored.session.user);
+    };
+    window.addEventListener(AUTH_USER_UPDATED_EVENT, updateAccount);
+    window.addEventListener('storage', updateAccount);
+    return () => {
+      window.removeEventListener(AUTH_USER_UPDATED_EVENT, updateAccount);
+      window.removeEventListener('storage', updateAccount);
+    };
   }, [pathname, router]);
 
   useEffect(() => {
@@ -161,6 +192,35 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
     setNotificationsOpen(false);
     setProfileOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!authReady || !permissions.has('messaging.use')) { setMessageUnread(0); return; }
+    const controller = new AbortController();
+    let pending = false;
+    let refreshAgain = false;
+    const refresh = async (event?: Event) => {
+      if (pending) { if (event?.type === MESSAGING_UPDATED) refreshAgain = true; return; }
+      if (document.visibilityState !== 'visible') return;
+      pending = true;
+      try {
+        const result = await messagingApi<{ unread: number }>('/unread', { signal: controller.signal });
+        if (!controller.signal.aborted) setMessageUnread(result.unread);
+      } catch { /* Keep the last confirmed count during a temporary outage. */ }
+      finally {
+        pending = false;
+        if (refreshAgain && !controller.signal.aborted) { refreshAgain = false; void refresh(); }
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener(MESSAGING_UPDATED, refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      controller.abort(); window.clearInterval(timer);
+      window.removeEventListener(MESSAGING_UPDATED, refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [authReady, permissions]);
 
   useEffect(() => {
     if (!authReady || !permissions.has('event.view')) { setOverdueAlerts(null); setNotificationError(false); return; }
@@ -276,6 +336,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                     <Icon size={18} />
                     <span>{item.label}</span>
                     {item.badge && <em>{item.badge}</em>}
+                    {item.href === '/dashboard/messages' && messageUnread > 0 && <em>{messageUnread > 99 ? '99+' : messageUnread}</em>}
                   </Link>
                 );
               })}
@@ -328,6 +389,13 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
             </Link>
 
             <div className={styles.actionWrap}>
+              {permissions.has('messaging.use') && <Link href="/dashboard/messages" className={styles.iconButton} aria-label={messageUnread ? `Tin nhắn · ${messageUnread} chưa đọc` : 'Tin nhắn'} title="Tin nhắn & yêu cầu">
+                <MessageSquare size={18} />
+                {messageUnread > 0 && <span className={styles.notificationBadge}>{messageUnread > 99 ? '99+' : messageUnread}</span>}
+              </Link>}
+            </div>
+
+            <div className={styles.actionWrap}>
               <button
                 className={styles.iconButton}
                 onClick={() => { setNotificationsOpen(value => !value); setProfileOpen(false); }}
@@ -362,8 +430,9 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                 className={styles.profileButton}
                 onClick={() => { setProfileOpen(value => !value); setNotificationsOpen(false); }}
                 aria-expanded={profileOpen}
+                aria-label={`Tài khoản ${user.full_name}`}
               >
-                <span>{user.full_name.slice(0, 1).toUpperCase()}</span>
+                <span>{user.avatar_url ? <img src={resolveAvatarUrl(user.avatar_url)} alt="" /> : user.full_name.slice(0, 1).toUpperCase()}</span>
                 <div>
                   <strong>{user.full_name}</strong>
                   <small>{userRole(user)}</small>
@@ -373,12 +442,10 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               {profileOpen && (
                 <div className={styles.profileMenu}>
                   <div className={styles.profileSummary}>
-                    <span>{user.full_name.slice(0, 1).toUpperCase()}</span>
+                    <span>{user.avatar_url ? <img src={resolveAvatarUrl(user.avatar_url)} alt="" /> : user.full_name.slice(0, 1).toUpperCase()}</span>
                     <div><strong>{user.full_name}</strong><small>{user.email}</small></div>
                   </div>
-                  {permissions.has('settings.manage') && (
-                    <Link href="/dashboard/settings"><CircleUserRound size={16} /> Hồ sơ cá nhân</Link>
-                  )}
+                  <Link href="/dashboard/profile" onClick={() => setProfileOpen(false)}><CircleUserRound size={16} /> Hồ sơ cá nhân</Link>
                   <button onClick={() => void handleLogout()}><LogOut size={16} /> Đăng xuất</button>
                 </div>
               )}
@@ -386,7 +453,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className={styles.content}>{children}</main>
+        <main className={styles.content}><DashboardAccountContext.Provider value={user}>{children}</DashboardAccountContext.Provider></main>
         <footer className={styles.dashboardFooter}>
           <span>AI Safety Monitoring Platform</span>
           <span><Activity size={13} /> Hệ thống hỗ trợ giám sát — không thay thế quy trình an toàn tại hiện trường.</span>

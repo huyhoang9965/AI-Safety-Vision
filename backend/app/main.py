@@ -20,6 +20,7 @@ from app.api.users_admin import router as users_admin_router
 from app.api.chat import router as chat_router
 from app.api.settings import router as settings_router
 from app.api.reports import router as reports_router
+from app.api.messaging import router as messaging_router
 from app.api.inference import router as inference_router
 from app.api.models import router as models_router
 from app.api.videos import router as videos_router
@@ -85,6 +86,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/results", StaticFiles(directory=settings.output_dir), name="results")
+app.mount("/avatars", StaticFiles(directory=settings.avatar_storage_dir), name="avatars")
 app.include_router(videos_router)
 app.include_router(models_router)
 app.include_router(inference_router)
@@ -96,6 +98,7 @@ app.include_router(users_admin_router)
 app.include_router(chat_router)
 app.include_router(settings_router)
 app.include_router(reports_router)
+app.include_router(messaging_router)
 
 
 @app.get("/api/health", tags=["health"])

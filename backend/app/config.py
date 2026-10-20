@@ -54,7 +54,12 @@ class Settings:
     def migration_path(self) -> Path:
         return self.backend_root / "migrations" / "001_init.sql"
 
+    @property
+    def avatar_storage_dir(self) -> Path:
+        return self.project_root / "storage" / "avatars"
+
     def ensure_storage(self) -> None:
+        self.avatar_storage_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.video_storage_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_storage_dir.mkdir(parents=True, exist_ok=True)

@@ -14,3 +14,11 @@
 @media(max-width:760px){.header{align-items:stretch;flex-direction:column}.headerActions{overflow-x:auto}.metrics{grid-template-columns:repeat(2,1fr)}.workspace{display:block}.treePanel{border-right:0;border-bottom:1px solid #e3e8ef}.treeScroll{max-height:230px}.contentHeader{height:auto;min-height:58px}.toolbar{align-items:stretch;flex-wrap:wrap}.search{flex-basis:100%}.filter{flex:1}.cameraGrid{grid-template-columns:1fr}.formGrid,.formGrid3{grid-template-columns:1fr}.modalBackdrop{padding:9px}.modal{max-height:96vh}.preview{height:160px}}
 @media(max-width:470px){.metrics{grid-template-columns:1fr}.headerActions button{flex:1}.detailPanel{width:100vw}.infoGrid,.healthGrid{grid-template-columns:1fr}.quickStats{grid-template-columns:1fr}.cameraGrid{padding:8px}.contentHeader{padding:0 10px}.modal>footer{display:grid;grid-template-columns:1fr 1fr}.inlineInputs{grid-template-columns:1fr}.toast{right:12px;left:12px}}
 @media(prefers-reduced-motion:reduce){.spin,.modal,.toast{animation:none}.cameraCard,.detailPanel,.switchRow>button,.switchRow>button i{transition:none}}
+
+.preview { height: auto; min-height: 170px; aspect-ratio: 16 / 9; }
+.preview > div { position: absolute; inset: 0; }
+button.cardBody { width: 100%; border: 0; background: #fff; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+button.cardBody:hover { background: #edf7f8; }
+button.cardBody:focus-visible { outline: 3px solid #8bb6ff; outline-offset: -3px; }
+.cameraCard { cursor: default; }
+.cameraCard:hover { transform: none; }

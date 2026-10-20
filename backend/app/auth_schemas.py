@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
@@ -64,6 +66,11 @@ class UserResponse(BaseModel):
     status: str
     email_verified: bool
     memberships: list[MembershipResponse] = Field(default_factory=list)
+    birthday: date | None = None
+    gender: Literal["male", "female", "other", "undisclosed"] | None = None
+    bio: str = ""
+    created_at: datetime | None = None
+    password_changed_at: datetime | None = None
 
 
 class RegisterResponse(BaseModel):

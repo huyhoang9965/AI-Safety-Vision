@@ -17,6 +17,8 @@ from app.auth_schemas import (
     UserResponse,
 )
 from app.security import TokenError, decode_access_token
+from app.profile_schemas import ChangePasswordRequest, UpdateProfileRequest
+from app.services import profile_service
 from app.services import auth_service
 from app.services.auth_service import AuthenticationError, RegistrationError
 
@@ -151,3 +153,39 @@ def logout(body: LogoutRequest) -> None:
 @router.get("/me", response_model=UserResponse)
 def me(user: Annotated[dict[str, Any], Depends(current_user)]) -> UserResponse:
     return UserResponse(**user)
+
+
+@router.post("/me", response_model=UserResponse)
+def update_me(
+    body: UpdateProfileRequest,
+    user: Annotated[dict[str, Any], Depends(current_user)],
+) -> UserResponse:
+    try:
+        result = profile_service.update_profile(user["id"], body)
+    except profile_service.ProfileConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except profile_service.ProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Không thể lưu hồ sơ. Vui lòng thử lại") from exc
+    return UserResponse(**result)
+
+
+@router.post("/me/password", response_model=TokenResponse)
+def update_my_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    user: Annotated[dict[str, Any], Depends(current_user)],
+) -> TokenResponse:
+    client_ip, user_agent = _client_context(request)
+    try:
+        result = profile_service.change_password(
+            user["id"], body.current_password.get_secret_value(), body.new_password.get_secret_value(),
+            client_ip, user_agent,
+        )
+    except profile_service.ProfileError as exc:
+        # A wrong current password is not an expired access token.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Không thể đổi mật khẩu. Vui lòng thử lại") from exc
+    return TokenResponse(**result)

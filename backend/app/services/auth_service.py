@@ -35,11 +35,16 @@ def _permissions_for_role(conn: Any, role_id: UUID) -> list[str]:
 def _user_payload(conn: Any, user_id: UUID | str) -> dict[str, Any] | None:
     user = conn.execute(
         """
-        SELECT id, email, username, full_name, department, job_title, phone,
-               avatar_url, status::text AS status,
-               email_verified_at IS NOT NULL AS email_verified
-        FROM safety.users
-        WHERE id = %s AND deleted_at IS NULL
+        SELECT u.id, u.email, u.username, u.full_name, u.department, u.job_title, u.phone,
+               u.avatar_url, u.status::text AS status,
+               u.email_verified_at IS NOT NULL AS email_verified,
+               u.preferences->'profile'->>'birthday' AS birthday,
+               u.preferences->'profile'->>'gender' AS gender,
+               COALESCE(u.preferences->'profile'->>'bio', '') AS bio,
+               u.created_at, c.password_changed_at
+        FROM safety.users u
+        LEFT JOIN safety.user_credentials c ON c.user_id = u.id
+        WHERE u.id = %s AND u.deleted_at IS NULL
         """,
         (user_id,),
     ).fetchone()

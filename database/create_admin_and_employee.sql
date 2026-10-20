@@ -19,12 +19,16 @@ SET name = EXCLUDED.name,
     is_active = true,
     updated_at = now();
 
--- Employee role has exactly one permission: camera.view.
+-- Employees can monitor cameras and exchange internal messages and requests.
+INSERT INTO permissions (code, name, description)
+VALUES ('messaging.use', 'Tin nhắn & yêu cầu', 'Trao đổi và xử lý yêu cầu nội bộ trong cùng tổ chức')
+ON CONFLICT (code) DO NOTHING;
+
 INSERT INTO roles (code, name, description, is_system)
 VALUES (
     'camera_employee',
     'Nhân viên camera',
-    'Chỉ được xem camera giám sát',
+    'Xem camera giám sát và trao đổi tin nhắn, yêu cầu nội bộ',
     true
 )
 ON CONFLICT (code) DO UPDATE
@@ -38,7 +42,7 @@ WHERE role_id = (SELECT id FROM roles WHERE code = 'camera_employee');
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
-JOIN permissions p ON p.code = 'camera.view'
+JOIN permissions p ON p.code IN ('camera.view', 'messaging.use')
 WHERE r.code = 'camera_employee'
 ON CONFLICT DO NOTHING;
 
@@ -165,7 +169,7 @@ COMMIT;
 
 -- Verification:
 -- admin has dashboard.view and camera.view among other permissions;
--- employee has camera.view only.
+-- employee has camera.view and messaging.use.
 SELECT
     u.email,
     u.full_name,

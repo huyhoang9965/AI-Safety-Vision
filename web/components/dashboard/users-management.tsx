@@ -9,8 +9,9 @@ import {
   Plus, RefreshCw, Search, Shield, ShieldCheck, ShieldOff, Smartphone,
   UserCheck, UserCog, UserRound, Users, UserX, X,
 } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
-import { readAuthSession, userPermissions } from '@/lib/auth';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { readAuthSession, resolveAvatarUrl, userPermissions } from '@/lib/auth';
+import { useDashboardAccount } from './dashboard-account';
 import styles from './users-management.module.css';
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_URL||'http://localhost:8000').replace(/\/$/,'');
@@ -40,7 +41,19 @@ const permissionGroups=[
 
 function headers():HeadersInit{const stored=readAuthSession();return{'Content-Type':'application/json',...(stored?{Authorization:'Bearer '+stored.session.access_token}:{})};}
 function apiError(payload:unknown):string{return payload&&typeof payload==='object'&&'detail'in payload?String((payload as {detail:unknown}).detail):'Không thể hoàn thành yêu cầu.';}
-function initials(name:string):string{return name.split(/\s+/).filter(Boolean).slice(-2).map(item=>item[0]).join('').toUpperCase();}
+function initials(name:string):string{return name.trim().split(/\s+/).filter(Boolean).slice(-2).map(item=>Array.from(item)[0]).join('').toUpperCase()||'ND';}
+function UserAvatar({name,url,size=36,lazy=true}:{name:string;url:string|null;size?:number;lazy?:boolean}){
+  const [failed,setFailed]=useState<string|null>(null);
+  let source:string|undefined;
+  try {
+    const resolved=resolveAvatarUrl(url?.trim());
+    if(resolved){const parsed=new URL(resolved,API_BASE+'/');if(['http:','https:'].includes(parsed.protocol))source=parsed.href;}
+  }catch{/* Invalid image URLs use initials without a broken image icon. */}
+  return <span className={styles.avatar}>{source&&failed!==source
+    ?<img src={source} width={size} height={size} loading={lazy?'lazy':'eager'} decoding="async" alt={'Ảnh đại diện của '+name} onError={()=>setFailed(source!)} />
+    :<span role="img" aria-label={'Ảnh đại diện của '+name+' (chữ viết tắt)'}>{initials(name)}</span>}
+  </span>;
+}
 function dateTime(value:string|null):string{return value?new Intl.DateTimeFormat('vi-VN',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'Chưa có dữ liệu';}
 function relative(value:string|null):string{if(!value)return'Chưa đăng nhập';const sec=Math.max(0,(Date.now()-new Date(value).getTime())/1000);if(sec<60)return'Vừa xong';if(sec<3600)return Math.floor(sec/60)+' phút trước';if(sec<86400)return Math.floor(sec/3600)+' giờ trước';return Math.floor(sec/86400)+' ngày trước';}
 function emptyForm(role=''):UserForm{return{email:'',temporary_password:'',full_name:'',username:'',department:'',job_title:'',phone:'',role_id:role,site_ids:[],status:'active'};}
@@ -56,15 +69,35 @@ export default function UsersManagement(){
   const [form,setForm]=useState<UserForm>(emptyForm());const [statusModal,setStatusModal]=useState<UserStatus|null>(null);
   const [passwordModal,setPasswordModal]=useState(false);const [password,setPassword]=useState('');
   const [busy,setBusy]=useState(false);const [toast,setToast]=useState('');
-  const auth=useMemo(()=>typeof window==='undefined'?null:readAuthSession(),[]);
-  const permissions=useMemo(()=>auth?userPermissions(auth.session.user):new Set<string>(),[auth]);
-  const canManage=permissions.has('user.manage');const currentUserId=auth?.session.user.id||'';
-
-  const loadData=useCallback(async(quiet=false)=>{if(!quiet)setLoading(true);setError('');try{const response=await authenticatedFetch(API_BASE+'/api/users',{headers:headers()});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(payload));const next=payload as ResponseData;setData(next);setSelectedId(current=>next.users.some(item=>item.id===current)?current:next.users[0]?.id||'');}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể tải người dùng.');}finally{setLoading(false);}},[]);
+  const currentUser=useDashboardAccount();
+  const permissions=useMemo(()=>userPermissions(currentUser),[currentUser]);
+  const canManage=permissions.has('user.manage');const currentUserId=currentUser.id;
+  const detailRequest=useRef<AbortController|null>(null);
+  const loadData=useCallback(async(quiet=false)=>{if(!quiet)setLoading(true);setError('');try{const response=await authenticatedFetch(API_BASE+'/api/users',{headers:headers()});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(payload));const next=payload as ResponseData;setData(next);setSelectedId(current=>next.users.some(item=>item.id===current)?current:'');setDetail(current=>{const updated=next.users.find(item=>item.id===current?.id);return current&&updated?{...current,...updated}:null;});}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể tải người dùng.');}finally{setLoading(false);}},[]);
   useEffect(()=>{void loadData();},[loadData]);
-  const loadDetail=useCallback(async(id:string)=>{if(!id){setDetail(null);return;}setDetailLoading(true);try{const response=await authenticatedFetch(API_BASE+'/api/users/'+id,{headers:headers()});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(apiError(payload));setDetail(payload as UserDetail);}catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể tải hồ sơ người dùng.');}finally{setDetailLoading(false);}},[]);
-  useEffect(()=>{void loadDetail(selectedId);},[selectedId,loadDetail]);
-
+  const loadDetail=useCallback(async(id:string)=>{
+    detailRequest.current?.abort();
+    const controller=new AbortController();detailRequest.current=controller;
+    if(!id){setDetail(null);setDetailLoading(false);return;}
+    setDetailLoading(true);setDetail(null);
+    try{
+      const response=await authenticatedFetch(API_BASE+'/api/users/'+id,{headers:headers(),signal:controller.signal});
+      const payload=await response.json().catch(()=>null);
+      if(controller.signal.aborted)return;
+      if(!response.ok)throw new Error(apiError(payload));setDetail(payload as UserDetail);
+    }catch(requestError){if(!controller.signal.aborted)setError(requestError instanceof Error?requestError.message:'Không thể tải hồ sơ người dùng.');}
+    finally{if(!controller.signal.aborted)setDetailLoading(false);}
+  },[]);
+  useEffect(()=>{
+    if(mobileDetail&&selectedId)void loadDetail(selectedId);
+    else {detailRequest.current?.abort();setDetail(null);setDetailLoading(false);}
+    return()=>detailRequest.current?.abort();
+  },[selectedId,mobileDetail,loadDetail]);
+  useEffect(()=>{
+    if(!mobileDetail)return;
+    const close=(event:KeyboardEvent)=>{if(event.key==='Escape')setMobileDetail(false);};
+    window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close);
+  },[mobileDetail]);
   const filtered=useMemo(()=>data.users.filter(item=>{const text=[item.full_name,item.email,item.department||'',item.job_title||'',item.role_name].join(' ').toLowerCase();return(!search.trim()||text.includes(search.toLowerCase()))&&(status==='all'||item.status===status)&&(role==='all'||item.role_id===role);}),[data.users,search,status,role]);
   function notify(message:string){setToast(message);window.setTimeout(()=>setToast(''),2800);}
   function selectUser(id:string){setSelectedId(id);setDetailTab('profile');setMobileDetail(true);}
@@ -88,15 +121,15 @@ export default function UsersManagement(){
     <section className={styles.panel}>
       <div className={styles.tabs}><button className={tab==='users'?styles.activeTab:''} onClick={()=>setTab('users')}><Users size={15}/> Người dùng <b>{data.summary.total}</b></button><button className={tab==='roles'?styles.activeTab:''} onClick={()=>setTab('roles')}><Shield size={15}/> Vai trò & ma trận quyền <b>{data.roles.length}</b></button></div>
       {tab==='users'?<>
-        <div className={styles.toolbar}><label className={styles.search}><Search size={16}/><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Tìm tên, email, phòng ban..."/>{search&&<button onClick={()=>setSearch('')}><X size={14}/></button>}</label><label className={styles.filter}><Filter size={15}/><select value={status} onChange={event=>setStatus(event.target.value as 'all'|UserStatus)}><option value="all">Mọi trạng thái</option>{Object.entries(statusLabels).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label className={styles.filter}><Shield size={15}/><select value={role} onChange={event=>setRole(event.target.value)}><option value="all">Mọi vai trò</option>{data.roles.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><span className={styles.resultCount}>{filtered.length} kết quả</span></div>
-        {loading?<div className={styles.loading}><LoaderCircle className={styles.spin}/><strong>Đang tải người dùng</strong><span>Đồng bộ vai trò và quyền truy cập...</span></div>:!filtered.length?<div className={styles.empty}><span><Search size={26}/></span><h3>Không tìm thấy người dùng</h3><p>Hãy thay đổi từ khóa hoặc bộ lọc đang chọn.</p><button className={styles.secondaryButton} onClick={()=>{setSearch('');setStatus('all');setRole('all');}}>Xóa bộ lọc</button></div>:<div className={styles.tableWrap}><table><thead><tr><th>Người dùng</th><th>Vai trò</th><th>Phòng ban</th><th>Phạm vi site</th><th>Trạng thái</th><th>Đăng nhập gần nhất</th><th/></tr></thead><tbody>{filtered.map(item=><tr key={item.id} className={selectedId===item.id?styles.activeRow:''} onClick={()=>selectUser(item.id)}><td><div className={styles.userCell}><span>{item.avatar_url?<img src={item.avatar_url} alt=""/>:initials(item.full_name)}</span><div><strong>{item.full_name}{item.id===currentUserId&&<em>Bạn</em>}</strong><small>{item.email}</small></div></div></td><td><span className={styles.roleBadge} data-role={item.role_code}><Shield size={12}/>{item.role_name}</span><small>{item.permissions.length} quyền</small></td><td><strong>{item.department||'Chưa cập nhật'}</strong><small>{item.job_title||'—'}</small></td><td><strong>{item.site_count?item.site_count+' nhà máy':'Toàn bộ nhà máy'}</strong><small>{item.site_count?'Phạm vi giới hạn':'Theo tổ chức'}</small></td><td><span className={styles.statusBadge} data-status={item.status}><i/>{statusLabels[item.status]}</span>{item.must_change_password&&<small className={styles.passwordFlag}>Cần đổi mật khẩu</small>}</td><td><strong>{relative(item.last_login_at)}</strong><small>{item.active_sessions} phiên hoạt động</small></td><td><ChevronRight size={16}/></td></tr>)}</tbody></table></div>}
+        <div className={styles.toolbar}><label className={styles.search}><Search size={16}/><input aria-label="Tìm người dùng" value={search} onChange={event=>setSearch(event.target.value)} placeholder="Tìm tên, email, phòng ban..."/>{search&&<button onClick={()=>setSearch('')}><X size={14}/></button>}</label><label className={styles.filter}><Filter size={15}/><select aria-label="Trạng thái người dùng" value={status} onChange={event=>setStatus(event.target.value as 'all'|UserStatus)}><option value="all">Mọi trạng thái</option>{Object.entries(statusLabels).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label className={styles.filter}><Shield size={15}/><select aria-label="Vai trò người dùng" value={role} onChange={event=>setRole(event.target.value)}><option value="all">Mọi vai trò</option>{data.roles.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><span className={styles.resultCount}>{filtered.length} kết quả</span></div>
+        {loading?<div className={styles.loading}><LoaderCircle className={styles.spin}/><strong>Đang tải người dùng</strong><span>Đồng bộ vai trò và quyền truy cập...</span></div>:!filtered.length?<div className={styles.empty}><span><Search size={26}/></span><h3>Không tìm thấy người dùng</h3><p>Hãy thay đổi từ khóa hoặc bộ lọc đang chọn.</p><button className={styles.secondaryButton} onClick={()=>{setSearch('');setStatus('all');setRole('all');}}>Xóa bộ lọc</button></div>:<div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Danh sách người dùng"><table><thead><tr><th>Người dùng</th><th>Vai trò</th><th>Phòng ban</th><th>Phạm vi site</th><th>Trạng thái</th><th>Đăng nhập gần nhất</th><th/></tr></thead><tbody>{filtered.map(item=><tr key={item.id} className={selectedId===item.id?styles.activeRow:''} onClick={()=>selectUser(item.id)}><td><div className={styles.userCell}><UserAvatar name={item.full_name} url={item.avatar_url}/><button className={styles.userIdentity} aria-label={'Xem hồ sơ '+item.full_name}><strong>{item.full_name}{item.id===currentUserId&&<em>Bạn</em>}</strong><small>{item.email}</small></button></div></td><td><span className={styles.roleBadge} data-role={item.role_code}><Shield size={12}/>{item.role_name}</span><small>{item.permissions.length} quyền</small></td><td><strong>{item.department||'Chưa cập nhật'}</strong><small>{item.job_title||'—'}</small></td><td><strong>{item.site_count?item.site_count+' nhà máy':'Toàn bộ nhà máy'}</strong><small>{item.site_count?'Phạm vi giới hạn':'Theo tổ chức'}</small></td><td><span className={styles.statusBadge} data-status={item.status}><i/>{statusLabels[item.status]}</span>{item.must_change_password&&<small className={styles.passwordFlag}>Cần đổi mật khẩu</small>}</td><td><strong>{relative(item.last_login_at)}</strong><small>{item.active_sessions} phiên hoạt động</small></td><td><ChevronRight size={16}/></td></tr>)}</tbody></table></div>}
       </>:<RolesView roles={data.roles} permissions={data.permissions}/>}
     </section>
 
-    <aside className={`${styles.drawer} ${mobileDetail?styles.drawerOpen:''}`}>
-      <div className={styles.drawerHeader}><div><span>HỒ SƠ NGƯỜI DÙNG</span>{detail&&<em className={styles.statusBadge} data-status={detail.status}><i/>{statusLabels[detail.status]}</em>}</div><button onClick={()=>setMobileDetail(false)}><X size={18}/></button></div>
+    <aside aria-label="Chi tiết người dùng" aria-hidden={!mobileDetail} inert={!mobileDetail} className={`${styles.drawer} ${mobileDetail?styles.drawerOpen:''}`}>
+      <div className={styles.drawerHeader}><div><span>HỒ SƠ NGƯỜI DÙNG</span>{detail&&<em className={styles.statusBadge} data-status={detail.status}><i/>{statusLabels[detail.status]}</em>}</div><button aria-label="Đóng hồ sơ người dùng" onClick={()=>setMobileDetail(false)}><X size={18}/></button></div>
       {detailLoading?<div className={styles.drawerLoading}><LoaderCircle className={styles.spin}/></div>:detail?<>
-        <div className={styles.profileHero}><span>{detail.avatar_url?<img src={detail.avatar_url} alt=""/>:initials(detail.full_name)}</span><div><h2>{detail.full_name}</h2><p>{detail.email}</p><small>{detail.job_title||'Chưa có chức danh'} · {detail.department||'Chưa có phòng ban'}</small></div>{canManage&&<button onClick={()=>openEdit(detail)}><Edit3 size={15}/> Sửa</button>}</div>
+        <div className={styles.profileHero}><UserAvatar name={detail.full_name} url={detail.avatar_url} size={52} lazy={false}/><div><h2>{detail.full_name}</h2><p>{detail.email}</p><small>{detail.job_title||'Chưa có chức danh'} · {detail.department||'Chưa có phòng ban'}</small></div>{canManage&&<button onClick={()=>openEdit(detail)}><Edit3 size={15}/> Sửa</button>}</div>
         <div className={styles.drawerTabs}><button className={detailTab==='profile'?styles.selectedTab:''} onClick={()=>setDetailTab('profile')}>Tổng quan</button><button className={detailTab==='security'?styles.selectedTab:''} onClick={()=>setDetailTab('security')}>Bảo mật</button><button className={detailTab==='activity'?styles.selectedTab:''} onClick={()=>setDetailTab('activity')}>Hoạt động</button></div>
         <div className={styles.drawerScroll}>{detailTab==='profile'?<ProfileTab user={detail} roles={data.roles} sites={data.sites}/>:detailTab==='security'?<SecurityTab user={detail}/>:<ActivityTab user={detail}/>}</div>
         {canManage&&<div className={styles.drawerActions}><button onClick={()=>{setPassword('');setPasswordModal(true);}}><KeyRound size={15}/> Đặt mật khẩu tạm</button><button disabled={detail.id===currentUserId} data-danger={detail.status==='active'} onClick={()=>setStatusModal(detail.status==='active'?'locked':'active')}>{detail.status==='active'?<Lock size={15}/>:<UserCheck size={15}/>} {detail.status==='active'?'Khóa tài khoản':'Kích hoạt lại'}</button></div>}

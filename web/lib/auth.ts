@@ -23,6 +23,11 @@ export type ApiUser = {
   status: string;
   email_verified: boolean;
   memberships: ApiMembership[];
+  birthday?: string | null;
+  gender?: 'male' | 'female' | 'other' | 'undisclosed' | null;
+  bio?: string;
+  created_at?: string | null;
+  password_changed_at?: string | null;
 };
 
 export type AuthSession = {
@@ -160,6 +165,31 @@ export function readAuthSession(): { session: AuthSession; remember: boolean } |
 export function clearAuthSession(): void {
   window.localStorage.removeItem(AUTH_STORAGE_KEY);
   window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+export const AUTH_USER_UPDATED_EVENT = 'safety-auth-user-updated';
+
+export function updateStoredUser(user: ApiUser): void {
+  const stored = readAuthSession();
+  if (!stored || stored.session.user.id !== user.id) {
+    throw new AuthApiError('Phiên đăng nhập đã thay đổi. Vui lòng đăng nhập lại.', 401);
+  }
+  saveAuthSession({ ...stored.session, user }, stored.remember);
+  window.dispatchEvent(new Event(AUTH_USER_UPDATED_EVENT));
+}
+
+export function replaceCurrentAuthSession(session: AuthSession): void {
+  const stored = readAuthSession();
+  if (!stored || stored.session.user.id !== session.user.id) {
+    throw new AuthApiError('Phiên đăng nhập đã thay đổi. Vui lòng đăng nhập lại.', 401);
+  }
+  saveAuthSession(session, stored.remember);
+  window.dispatchEvent(new Event(AUTH_USER_UPDATED_EVENT));
+}
+
+export function resolveAvatarUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  return url.startsWith('/') && !url.startsWith('//') ? API_BASE + url : url;
 }
 
 function tokenExpiry(session: AuthSession): number | null {

@@ -10,3 +10,19 @@
 @media(max-width:760px){.header{align-items:stretch;flex-direction:column}.metrics{grid-template-columns:repeat(2,1fr)}.toolbar{align-items:stretch;flex-direction:column}.search,.filter{width:100%;min-width:0}.resultCount{padding:3px}.rolesView{padding:8px}.rolesIntro{align-items:flex-start;flex-direction:column}.roleCards{grid-template-columns:1fr}.formGrid,.roleOptions,.siteOptions{grid-template-columns:1fr}.modalBackdrop{padding:9px}.editorModal{max-height:96vh}.drawer{width:100vw}.tableWrap table{min-width:980px}}
 @media(max-width:470px){.metrics{grid-template-columns:1fr}.headerActions button{flex:1}.infoGrid,.securityOverview{grid-template-columns:1fr}.drawerActions{grid-template-columns:1fr}.profileHero{grid-template-columns:47px minmax(0,1fr)}.profileHero>button{grid-column:2;justify-self:start}.accountMeta{grid-template-columns:1fr}.editorModal>footer,.confirmModal>footer,.passwordModal>footer{display:grid;grid-template-columns:1fr 1fr}.toast{right:12px;left:12px}}
 @media(prefers-reduced-motion:reduce){.spin,.editorModal,.confirmModal,.passwordModal,.toast{animation:none}.drawer{transition:none}}
+
+.avatar { position: relative; aspect-ratio: 1; }
+.avatar img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; border-radius: inherit; }
+.avatar > span { display: grid; width: 100%; height: 100%; place-items: center; }
+.userIdentity { display: grid; gap: 4px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.userIdentity:focus-visible { outline: 2px solid #8f7bdd; outline-offset: 4px; border-radius: 4px; }
+.userCell strong { flex-wrap: wrap; line-height: 1.5; }
+.userCell strong em { flex-shrink: 0; }
+.profileHero > .avatar { width: 52px; height: 52px; }
+.profileHero small { line-height: 1.5; overflow-wrap: anywhere; }
+.metrics em { overflow: hidden; text-overflow: ellipsis; }
+.tableWrap, .matrixScroll { scrollbar-width: thin !important; scrollbar-color: #b8b0d6 #f3f1fa; }
+.tableWrap::-webkit-scrollbar, .matrixScroll::-webkit-scrollbar { display: block !important; height: 8px !important; width: 8px !important; }
+.tableWrap::-webkit-scrollbar-thumb, .matrixScroll::-webkit-scrollbar-thumb { background: #b8b0d6; border-radius: 5px; }
+.tableWrap:focus-visible { outline: 2px solid #8f7bdd; outline-offset: -2px; }
+@media(max-width:470px) { .profileHero { grid-template-columns: 52px minmax(0,1fr); } }

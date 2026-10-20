@@ -36,6 +36,7 @@ const PERIODS:Array<{value:Period;label:string}>=[
 ];
 const severityLabel={critical:'Nghiêm trọng',high:'Cao',medium:'Trung bình',low:'Thấp'};
 const statusLabel={new:'Mới',acknowledged:'Đã xác nhận',resolved:'Đã xử lý',dismissed:'Bỏ qua'};
+const cameraStatusLabel:Record<string,string>={online:'Trực tuyến',offline:'Ngoại tuyến',warning:'Cảnh báo',maintenance:'Bảo trì',disabled:'Đã tắt'};
 
 function headers():HeadersInit{const stored=readAuthSession();return stored?{Authorization:'Bearer '+stored.session.access_token}:{};}
 function apiError(payload:unknown){return payload&&typeof payload==='object'&&'detail' in payload?String((payload as {detail:unknown}).detail):'Không thể tải dữ liệu báo cáo.';}
@@ -106,12 +107,12 @@ function ResponsePanel({metrics}:{metrics:ResponseMetrics}){
 function SeverityPanel({severities,statuses,total}:{severities:NamedMetric[];statuses:NamedMetric[];total:number}){
  const colors=['#d94d53','#e48845','#e5b84b','#4aa983'];let cursor=0;
  const stops=severities.map((x,i)=>{const from=cursor;cursor+=x.percentage;return colors[i]+' '+from+'% '+cursor+'%';}).join(',');
- return <section className={styles.panel}><PanelHeader icon={<ShieldCheck/>} title="Cơ cấu rủi ro" subtitle="Theo mức độ và trạng thái xử lý"/><div className={styles.donutRow}><div className={styles.donut} style={{background:total?'conic-gradient('+stops+')':'#edf1ef'}}><span><strong>{number(total)}</strong><small>TỔNG LỖI</small></span></div><div className={styles.severityList}>{severities.map((x,i)=><div key={x.key}><i style={{background:colors[i]}}/><span><strong>{x.label}</strong><small>{x.percentage.toFixed(1)}%</small></span><b>{number(x.total)}</b></div>)}</div></div><div className={styles.statusFlow}>{statuses.map(x=><div key={x.key} data-status={x.key}><span><i/><strong>{x.label}</strong></span><b>{number(x.total)}</b><small>{x.percentage.toFixed(1)}%</small></div>)}</div></section>;
+ return <section className={styles.panel} aria-label="Cơ cấu rủi ro"><PanelHeader icon={<ShieldCheck/>} title="Cơ cấu rủi ro" subtitle="Theo mức độ và trạng thái xử lý"/><div className={styles.donutRow}><div className={styles.donut} style={{background:total?'conic-gradient('+stops+')':'#edf1ef'}}><span><strong>{number(total)}</strong><small>TỔNG LỖI</small></span></div><div className={styles.severityList}>{severities.map((x,i)=><div key={x.key}><i style={{background:colors[i]}}/><span><strong>{x.label}</strong><small>{x.percentage.toFixed(1)}%</small></span><b>{number(x.total)}</b></div>)}</div></div><div className={styles.statusFlow}>{statuses.map(x=><div key={x.key} data-status={x.key}><span><i/><strong>{x.label}</strong></span><b>{number(x.total)}</b><small>{x.percentage.toFixed(1)}%</small></div>)}</div></section>;
 }
 
 function EventTypes({rows}:{rows:EventType[]}){
  const max=Math.max(1,...rows.map(x=>x.total));
- return <section className={styles.panel}><PanelHeader icon={<BarChart3/>} title="Loại vi phạm phổ biến" subtitle="Xếp hạng theo số lần phát hiện" badge="TOP 10"/><div className={styles.typeList}>{rows.length?rows.map((x,i)=><div key={x.code} className={styles.typeRow}><span className={styles.rank}>{String(i+1).padStart(2,'0')}</span><p><strong>{x.name}</strong><small>{x.code} · Tin cậy {percent(x.average_confidence)}</small></p><div><i><b style={{width:(x.total/max*100)+'%',background:x.color||'#537eea'}}/></i></div><em>{number(x.total)}</em><Delta value={x.change_percent} inverse/></div>):<Empty compact text="Chưa có loại vi phạm nào trong kỳ"/>}</div></section>;
+ return <section className={styles.panel} aria-label="Loại vi phạm phổ biến"><PanelHeader icon={<BarChart3/>} title="Loại vi phạm phổ biến" subtitle="Xếp hạng theo số lần phát hiện" badge="TOP 10"/><div className={styles.typeList}>{rows.length?rows.map((x,i)=><div key={x.code} className={styles.typeRow}><span className={styles.rank}>{String(i+1).padStart(2,'0')}</span><p><strong>{x.name}</strong><small>{x.code} · Tin cậy {percent(x.average_confidence)}</small></p><div><i><b style={{width:(x.total/max*100)+'%',background:x.color||'#537eea'}}/></i></div><em>{number(x.total)}</em><Delta value={x.change_percent} inverse/></div>):<Empty compact text="Chưa có loại vi phạm nào trong kỳ"/>}</div></section>;
 }
 
 function Heatmap({rows}:{rows:HeatCell[]}){
@@ -122,15 +123,31 @@ function Heatmap({rows}:{rows:HeatCell[]}){
 
 function SitePerformance({rows}:{rows:Site[]}){
  const max=Math.max(1,...rows.map(x=>x.total));
- return <section className={styles.panel}><PanelHeader icon={<Factory/>} title="Hiệu suất an toàn theo cơ sở" subtitle="So sánh khối lượng cảnh báo và tỷ lệ xử lý" badge={rows.length+' CƠ SỞ'}/>{rows.length?<div className={styles.siteTable}><div className={styles.siteHead}><span>Cơ sở</span><span>Phân bố cảnh báo</span><span>Nghiêm trọng</span><span>Đang mở</span><span>Tỷ lệ xử lý</span><span>Camera</span></div>{rows.map((x,i)=><div className={styles.siteRow} key={x.code}><span><i>{i+1}</i><p><strong>{x.name}</strong><small>{x.code}</small></p></span><span><b style={{width:(x.total/max*100)+'%'}}/><em>{number(x.total)}</em></span><span data-risk={x.critical>0}>{number(x.critical)}</span><span>{number(x.open_events)}</span><span><strong>{x.resolution_rate.toFixed(1)}%</strong><i><b style={{width:x.resolution_rate+'%'}}/></i></span><span>{x.cameras}</span></div>)}</div>:<Empty text="Chưa có dữ liệu để so sánh giữa các cơ sở"/>}</section>;
+ return <section className={styles.panel} aria-label="Hiệu suất an toàn theo cơ sở">
+  <PanelHeader icon={<Factory/>} title="Hiệu suất an toàn theo cơ sở" subtitle="So sánh khối lượng cảnh báo và tỷ lệ xử lý" badge={rows.length+' CƠ SỞ'}/>
+  {rows.length?<div className={styles.siteTable} tabIndex={0} role="region" aria-label="Bảng hiệu suất cơ sở">
+   <table>
+    <caption className={styles.srOnly}>Thống kê cảnh báo và xử lý theo từng cơ sở</caption>
+    <colgroup><col className={styles.siteNameColumn}/><col className={styles.siteDistributionColumn}/><col className={styles.siteCountColumn}/><col className={styles.siteCountColumn}/><col className={styles.siteResolutionColumn}/><col className={styles.siteCameraColumn}/></colgroup>
+    <thead><tr><th scope="col">Cơ sở</th><th scope="col">Phân bố cảnh báo</th><th scope="col">Nghiêm trọng</th><th scope="col">Đang mở</th><th scope="col">Tỷ lệ xử lý</th><th scope="col">Camera</th></tr></thead>
+    <tbody>{rows.map((x,i)=><tr key={x.code}>
+     <th scope="row"><div className={styles.siteIdentity}><span>{i+1}</span><div><strong>{x.name}</strong><small>{x.code}</small></div></div></th>
+     <td><div className={styles.alertDistribution}><div className={styles.alertTrack} aria-hidden="true"><span style={{width:(x.total/max*100)+'%'}}/></div><strong>{number(x.total)}</strong></div></td>
+     <td data-risk={x.critical>0}>{number(x.critical)}</td>
+     <td>{number(x.open_events)}</td>
+     <td><div className={styles.resolutionCell}><strong>{x.resolution_rate.toLocaleString('vi-VN',{minimumFractionDigits:1,maximumFractionDigits:1})}%</strong><div className={styles.resolutionTrack} aria-hidden="true"><span style={{width:Math.min(100,Math.max(0,x.resolution_rate))+'%'}}/></div></div></td>
+     <td>{number(x.cameras)}</td>
+    </tr>)}</tbody>
+   </table>
+  </div>:<Empty text="Chưa có dữ liệu để so sánh giữa các cơ sở"/>}
+ </section>;
 }
-
 function CameraRisks({rows}:{rows:RiskCamera[]}){
- return <section className={styles.panel}><PanelHeader icon={<Camera/>} title="Camera rủi ro cao" subtitle="Nguồn hình cần kiểm tra và tối ưu" badge="TOP 8"/><div className={styles.cameraList}>{rows.length?rows.map((x,i)=><article key={x.code}><span className={styles.cameraRank} data-top={i<3}>{i+1}</span><div><strong>{x.code} · {x.name}</strong><small>{x.site_name} · {x.zone_name||'Chưa phân khu'}</small></div><p><strong>{number(x.total)}</strong><small>cảnh báo</small></p><p data-critical={x.critical>0}><strong>{x.critical}</strong><small>nghiêm trọng</small></p><em data-online={x.status==='online'}><i/>{x.status}</em></article>):<Empty compact text="Chưa xác định camera rủi ro trong kỳ"/>}</div></section>;
+ return <section className={styles.panel} aria-label="Camera rủi ro cao"><PanelHeader icon={<Camera/>} title="Camera rủi ro cao" subtitle="Nguồn hình cần kiểm tra và tối ưu" badge="TOP 8"/><div className={styles.cameraList}>{rows.length?rows.map((x,i)=><article key={x.code}><span className={styles.cameraRank} data-top={i<3}>{i+1}</span><div><strong>{x.code} · {x.name}</strong><small>{x.site_name} · {x.zone_name||'Chưa phân khu'}</small></div><p><strong>{number(x.total)}</strong><small>cảnh báo</small></p><p data-critical={x.critical>0}><strong>{x.critical}</strong><small>nghiêm trọng</small></p><em data-online={x.status==='online'}><i/>{cameraStatusLabel[x.status]||x.status}</em></article>):<Empty compact text="Chưa xác định camera rủi ro trong kỳ"/>}</div></section>;
 }
 
 function RecentEvents({rows}:{rows:RecentEvent[]}){
- return <section className={styles.panel}><PanelHeader icon={<Activity/>} title="Cảnh báo gần đây" subtitle="Dữ liệu nguồn mới nhất từ hệ thống"/><div className={styles.recentList}>{rows.length?rows.slice(0,8).map(x=><article key={x.id}><span data-severity={x.severity}><Siren/></span><div><strong>{x.title}</strong><small>{x.camera_code} · {x.site_name} · {fullTime(x.detected_at)}</small></div><p><em data-severity={x.severity}>{severityLabel[x.severity]}</em><small>{percent(x.confidence)}</small></p><b data-status={x.status}>{statusLabel[x.status]}</b></article>):<Empty compact text="Chưa có cảnh báo mới trong khoảng thời gian này"/>}</div></section>;
+ return <section className={styles.panel} aria-label="Cảnh báo gần đây"><PanelHeader icon={<Activity/>} title="Cảnh báo gần đây" subtitle="Dữ liệu nguồn mới nhất từ hệ thống"/><div className={styles.recentList}>{rows.length?rows.slice(0,8).map(x=><article key={x.id}><span data-severity={x.severity}><Siren/></span><div><strong>{x.title}</strong><small>{x.camera_code} · {x.site_name} · {fullTime(x.detected_at)}</small></div><p><em data-severity={x.severity}>{severityLabel[x.severity]}</em><small>{percent(x.confidence)}</small></p><b data-status={x.status}>{statusLabel[x.status]}</b></article>):<Empty compact text="Chưa có cảnh báo mới trong khoảng thời gian này"/>}</div></section>;
 }
 
 function Empty({text,compact=false}:{text:string;compact?:boolean}){return <div className={compact?styles.empty+' '+styles.compact:styles.empty}><span><BarChart3/></span><strong>Chưa có dữ liệu</strong><small>{text}</small></div>;}

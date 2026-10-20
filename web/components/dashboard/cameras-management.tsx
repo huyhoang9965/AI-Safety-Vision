@@ -9,9 +9,9 @@ import {
   Network, Plus, Radio, RefreshCw, Search, Server, Settings2, ShieldCheck,
   Signal, Thermometer, Video, WifiOff, X, Zap,
 } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { readAuthSession, userPermissions } from '@/lib/auth';
-import { cameraDemoVideo, CAMERA_DEMO_PRESETS } from '@/lib/demo-cameras';
+import CameraPreviewVideo from './camera-preview-video';
 import styles from './cameras-management.module.css';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
@@ -87,8 +87,8 @@ export default function CamerasManagement() {
   const [busy,setBusy] = useState(false);
   const [toast,setToast] = useState('');
   const [demoVideos,setDemoVideos] = useState<DemoVideo[]>([]);
-  const [previewUrls,setPreviewUrls] = useState<Record<string,string>>({});
   const [demoCatalogReady,setDemoCatalogReady] = useState(false);
+  const detailRequest = useRef<AbortController | null>(null);
   const permissions = useMemo(() => {
     if (typeof window === 'undefined') return new Set<string>();
     const stored=readAuthSession(); return stored ? userPermissions(stored.session.user) : new Set<string>();
@@ -99,51 +99,38 @@ export default function CamerasManagement() {
   const loadData=useCallback(async(quiet=false)=>{
     if(!quiet)setLoading(true); setError('');
     try {
-      const [response,videosResponse]=await Promise.all([
+      const [infrastructureResult,videosResult]=await Promise.allSettled([
         authenticatedFetch(API_BASE+'/api/infrastructure',{headers:headers()}),
         authenticatedFetch(API_BASE+'/api/videos/test',{headers:headers()}),
       ]);
+      if(infrastructureResult.status==='rejected')throw infrastructureResult.reason;
+      const response=infrastructureResult.value;
       const payload=await response.json().catch(()=>null);
       if(!response.ok)throw new Error(apiError(payload));
       const next=payload as Infrastructure; setData(next);
-      if(videosResponse.ok)setDemoVideos(await videosResponse.json() as DemoVideo[]);
+      if(videosResult.status==='fulfilled'&&videosResult.value.ok)setDemoVideos(await videosResult.value.json() as DemoVideo[]);
+      else setError('Không thể tải nguồn video camera. Bấm Đồng bộ để thử lại.');
       setDemoCatalogReady(true);
       setExpanded(current=>current.size ? current : new Set(next.sites.map(site=>site.id)));
       setSelectedId(current=>next.cameras.some(camera=>camera.id===current)?current:next.cameras[0]?.id||'');
     } catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể tải hạ tầng camera.');}
-    finally{setLoading(false);}
+    finally{setLoading(false);setDemoCatalogReady(true);}
   },[]);
   useEffect(()=>{void loadData();},[loadData]);
 
-  useEffect(()=>{
-    if(!data.cameras.length||!demoVideos.length)return;
-    const controller=new AbortController(),created:string[]=[];
-    const curatedFiles = new Set(CAMERA_DEMO_PRESETS.flatMap(item => item.filenames));
-    void Promise.all(data.cameras.map(async(camera)=>{
-      if(camera.snapshot_url)return null;
-      const video=cameraDemoVideo(demoVideos,camera.code)||demoVideos.find(item=>curatedFiles.has(item.filename));
-      if(!video)return null;
-      try{
-        const response=await authenticatedFetch(API_BASE+'/api/videos/'+video.id+'/thumbnail',{headers:headers(),signal:controller.signal});
-        if(!response.ok)return null;
-        const url=URL.createObjectURL(await response.blob());created.push(url);
-        return [camera.id,url] as const;
-      }catch{return null;}
-    })).then(items=>{
-      if(controller.signal.aborted)return;
-      setPreviewUrls(Object.fromEntries(items.filter((item):item is readonly[string,string]=>item!==null)));
-    });
-    return()=>{controller.abort();created.forEach(url=>URL.revokeObjectURL(url));};
-  },[data.cameras,demoVideos]);
-
   const loadDetail=useCallback(async(id:string)=>{
-    if(!id){setDetail(null);return;} setDetailLoading(true);
-    try{const response=await authenticatedFetch(API_BASE+'/api/infrastructure/cameras/'+id,{headers:headers()}); const payload=await response.json().catch(()=>null); if(!response.ok)throw new Error(apiError(payload)); setDetail(payload as CameraDetail);}
-    catch(requestError){setError(requestError instanceof Error?requestError.message:'Không thể tải chi tiết camera.');}
-    finally{setDetailLoading(false);}
+    detailRequest.current?.abort();
+    const controller = new AbortController(); detailRequest.current = controller;
+    if(!id){setDetail(null);return;} setDetailLoading(true); setDetail(null);
+    try {
+      const response=await authenticatedFetch(API_BASE+'/api/infrastructure/cameras/'+id,{headers:headers(),signal:controller.signal});
+      const payload=await response.json().catch(()=>null);
+      if(controller.signal.aborted)return;
+      if(!response.ok)throw new Error(apiError(payload)); setDetail(payload as CameraDetail);
+    } catch(requestError) { if(!controller.signal.aborted)setError(requestError instanceof Error?requestError.message:'Không thể tải chi tiết camera.'); }
+    finally { if(!controller.signal.aborted)setDetailLoading(false); }
   },[]);
-  useEffect(()=>{void loadDetail(selectedId);},[selectedId,loadDetail]);
-
+  useEffect(()=>{void loadDetail(selectedId);return()=>detailRequest.current?.abort();},[selectedId,loadDetail]);
   const filtered=useMemo(()=>data.cameras.filter(camera=>{
     const matchText=!search.trim() || [camera.code,camera.name,camera.site_name,camera.zone_name||'',camera.ip_address||''].join(' ').toLowerCase().includes(search.toLowerCase());
     const matchStatus=status==='all'||camera.status===status;
@@ -224,12 +211,14 @@ export default function CamerasManagement() {
         {loading?<div className={styles.loading}><LoaderCircle className={styles.spin}/><strong>Đang tải hạ tầng camera</strong><span>Đồng bộ dữ liệu từ PostgreSQL...</span></div>:
         !data.sites.length?<div className={styles.empty}><span><Building2 size={28}/></span><h3>Chưa có nhà máy nào</h3><p>Tạo nhà máy đầu tiên, sau đó thêm khu vực và camera để bắt đầu quản lý hạ tầng.</p>{canSiteManage&&<button className={styles.primaryButton} onClick={()=>openSite()}><Plus size={16}/> Tạo nhà máy đầu tiên</button>}</div>:
         !filtered.length?<div className={styles.empty}><span><Search size={27}/></span><h3>Không tìm thấy camera</h3><p>Hãy thay đổi từ khóa, trạng thái hoặc phạm vi đang chọn.</p><button className={styles.secondaryButton} onClick={()=>{setSearch('');setStatus('all');setScope('all');}}>Xóa bộ lọc</button></div>:
-        view==='grid'?<div className={styles.cameraGrid}>{filtered.map(camera=><button className={`${styles.cameraCard} ${selectedId===camera.id?styles.activeCard:''}`} key={camera.id} onClick={()=>selectCamera(camera.id)}>
-          <div className={styles.preview}>{camera.snapshot_url||previewUrls[camera.id]?<img src={camera.snapshot_url||previewUrls[camera.id]} alt={'Ảnh xem trước '+camera.name} onError={event=>{const fallback=previewUrls[camera.id];if(fallback&&event.currentTarget.src!==fallback)event.currentTarget.src=fallback;else event.currentTarget.style.visibility='hidden';}}/>:<div className={styles.previewFallback}>{demoCatalogReady?<Camera size={31}/>:<LoaderCircle className={styles.spin} size={31}/>}<span>{demoCatalogReady?'Chưa cấu hình ảnh xem trước':'Đang tải ảnh xem trước...'}</span></div>}<span className={styles.statusBadge} data-status={camera.status}><i/>{statusLabels[camera.status]}</span><span className={styles.codeBadge}>{camera.code}</span>{!camera.snapshot_url&&previewUrls[camera.id]&&<span className={styles.demoBadge}>Dữ liệu kiểm thử</span>}</div>
-          <div className={styles.cardBody}><div><strong>{camera.name}</strong><span><MapPin size={13}/>{camera.zone_name||'Chưa gán khu vực'} · {camera.site_name}</span></div><ChevronRight size={16}/></div>
+        view==='grid'?<div className={styles.cameraGrid}>{filtered.map(camera=><article className={`${styles.cameraCard} ${selectedId===camera.id?styles.activeCard:''}`} key={camera.id}>
+          <div className={styles.preview}>
+            <CameraPreviewVideo code={camera.code} name={camera.name} videos={demoVideos} catalogLoading={!demoCatalogReady} />
+            <span className={styles.statusBadge} data-status={camera.status}><i/>{statusLabels[camera.status]}</span><span className={styles.codeBadge}>{camera.code}</span>
+          </div>
+          <button className={styles.cardBody} onClick={()=>selectCamera(camera.id)} aria-label={'Xem camera '+camera.code+' '+camera.name}><div><strong>{camera.name}</strong><span><MapPin size={13}/>{camera.zone_name||'Chưa gán khu vực'} · {camera.site_name}</span></div><ChevronRight size={16}/></button>
           <div className={styles.cardMeta}><span><Network size={13}/>{camera.ip_address||'Chưa có IP'}</span><span><Zap size={13}/>{camera.latest_latency_ms!==null?camera.latest_latency_ms+' ms':'—'}</span><span><Cpu size={13}/>{camera.deployment_count} AI</span></div>
-        </button>)}</div>:
-        <div className={styles.tableWrap}><table><thead><tr><th>Camera</th><th>Vị trí</th><th>Trạng thái</th><th>Kết nối</th><th>Thông số</th><th>Cập nhật</th><th/></tr></thead><tbody>{filtered.map(camera=><tr key={camera.id} className={selectedId===camera.id?styles.activeRow:''} onClick={()=>selectCamera(camera.id)}><td><div className={styles.cameraCell}><span><Camera size={17}/></span><div><strong>{camera.name}</strong><small>{camera.code}</small></div></div></td><td><strong>{camera.zone_name||'Chưa gán'}</strong><small>{camera.site_name}</small></td><td><span className={styles.inlineStatus} data-status={camera.status}><i/>{statusLabels[camera.status]}</span></td><td><strong>{camera.ip_address||'—'}</strong><small>{camera.stream_configured?'Đã cấu hình luồng':'Chưa có luồng'}</small></td><td><strong>{camera.resolution_width&&camera.resolution_height?camera.resolution_width+'×'+camera.resolution_height:'—'}</strong><small>{camera.fps?camera.fps+' FPS':'Chưa cấu hình'}</small></td><td><strong>{relative(camera.last_seen_at)}</strong><small>{camera.latest_latency_ms!==null?camera.latest_latency_ms+' ms':'Chưa có health check'}</small></td><td><ChevronRight size={16}/></td></tr>)}</tbody></table></div>}
+        </article>)}</div>:        <div className={styles.tableWrap}><table><thead><tr><th>Camera</th><th>Vị trí</th><th>Trạng thái</th><th>Kết nối</th><th>Thông số</th><th>Cập nhật</th><th/></tr></thead><tbody>{filtered.map(camera=><tr key={camera.id} className={selectedId===camera.id?styles.activeRow:''} onClick={()=>selectCamera(camera.id)}><td><div className={styles.cameraCell}><span><Camera size={17}/></span><div><strong>{camera.name}</strong><small>{camera.code}</small></div></div></td><td><strong>{camera.zone_name||'Chưa gán'}</strong><small>{camera.site_name}</small></td><td><span className={styles.inlineStatus} data-status={camera.status}><i/>{statusLabels[camera.status]}</span></td><td><strong>{camera.ip_address||'—'}</strong><small>{camera.stream_configured?'Đã cấu hình luồng':'Chưa có luồng'}</small></td><td><strong>{camera.resolution_width&&camera.resolution_height?camera.resolution_width+'×'+camera.resolution_height:'—'}</strong><small>{camera.fps?camera.fps+' FPS':'Chưa cấu hình'}</small></td><td><strong>{relative(camera.last_seen_at)}</strong><small>{camera.latest_latency_ms!==null?camera.latest_latency_ms+' ms':'Chưa có health check'}</small></td><td><ChevronRight size={16}/></td></tr>)}</tbody></table></div>}
       </main>
 
       <aside className={`${styles.detailPanel} ${mobileDetail?styles.mobileOpen:''}`}>
@@ -238,7 +227,7 @@ export default function CamerasManagement() {
           <div className={styles.detailHero}><span data-status={detail.status}><Radio size={22}/></span><div><strong>{statusLabels[detail.status]}</strong><small>{relative(detail.last_seen_at)}</small></div>{canCameraManage&&<button onClick={()=>openCamera(detail)}><Edit3 size={15}/> Sửa</button>}</div>
           <div className={styles.detailTabs}><button className={detailTab==='overview'?styles.selectedTab:''} onClick={()=>setDetailTab('overview')}>Tổng quan</button><button className={detailTab==='health'?styles.selectedTab:''} onClick={()=>setDetailTab('health')}>Sức khỏe</button><button className={detailTab==='ai'?styles.selectedTab:''} onClick={()=>setDetailTab('ai')}>Mô hình AI</button></div>
           <div className={styles.detailScroll}>
-            {detailTab==='overview'&&<Overview detail={detail}/>}
+            {detailTab==='overview'&&<><section className={styles.detailSection} aria-label="Video camera đã chọn"><h3>Video camera</h3><div className={styles.preview}><CameraPreviewVideo code={detail.code} name={detail.name} videos={demoVideos} catalogLoading={!demoCatalogReady}/></div></section><Overview detail={detail}/></>}
             {detailTab==='health'&&<Health detail={detail}/>}
             {detailTab==='ai'&&<AI detail={detail}/>}
           </div>
